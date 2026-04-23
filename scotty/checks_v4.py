@@ -1,0 +1,339 @@
+from dataclasses import dataclass
+import logging
+from pathlib import Path
+from scotty.fun_general_v4 import freq_GHz_to_angular_frequency, angular_frequency_to_wavenumber
+from scotty.geometry_v4 import MagneticField_Cylindrical, MagneticField_Cartesian
+from scotty.profile_fit import ProfileFitLike
+from scotty.typing import FloatArray
+from typing import Literal, Optional, Sequence, Union, Tuple, overload
+import numpy as np
+import os
+
+##################################################
+#
+# CHECKS
+#
+##################################################
+
+VALID_GEOMETRIES = Literal["cylindrical", "cartesian"]
+VALID_LAUNCH_MODE_FLAGS = Literal[1, -1, "O", "X"]
+VALID_LAUNCH_FLAGS = Optional[Literal["plasma", "vacuum"]]
+VALID_BOUNDARY_FLAGS = Optional[Literal["continuous", "discontinuous"]]
+VALID_FIELDS = Union[MagneticField_Cylindrical, MagneticField_Cartesian]
+
+##################################################
+#
+# CLASS PARAMETERS
+#
+##################################################
+
+log = logging.getLogger(__name__)
+
+class Parameters:
+    # Initialisating here to stop type checker from complaining
+    geometry: VALID_GEOMETRIES
+    q_initial: FloatArray
+    mode_flag_initial: Literal[1,-1]
+    launch_flag: VALID_LAUNCH_FLAGS
+    
+    def __init__(self,
+        
+        # Main parameters
+        geometry: VALID_GEOMETRIES,
+        poloidal_launch_angle_Torbeam: float,
+        toroidal_launch_angle_Torbeam: float,
+        launch_freq_GHz: float,
+        launch_beam_width: float,
+        launch_beam_curvature: float,
+        q_launch: FloatArray,
+        mode_flag_launch: VALID_LAUNCH_MODE_FLAGS,
+
+        # Solver settings and finite-difference parameters
+        launch_flag: VALID_LAUNCH_FLAGS,
+        boundary_flag: VALID_BOUNDARY_FLAGS,
+        relativistic_flag: bool,
+        auto_delta_sign: bool,
+        deltas_cylindrical: FloatArray,
+        deltas_cartesian: FloatArray,
+        len_tau: int,
+        rtol: float,
+        atol: float,
+        poloidal_flux_enter: float,
+        poloidal_flux_zero_density: float,
+        poloidal_flux_zero_temperature: float,
+
+        # Data input and output arguments
+        magnetic_data_path: Union[str, Path],
+        ne_data_path: Union[str, Path],
+        Te_data_path: Union[str, Path],
+        input_filename_suffix: str,
+        output_path: Union[str, Path],
+        output_filename_suffix: str,
+        shot: Optional[int],
+        equil_time: Optional[Union[int, float]],
+
+        # Interpolation settings
+        find_B_method: Union[str, MagneticField_Cylindrical, MagneticField_Cartesian],
+        density_fit_method: Optional[Union[str, ProfileFitLike]],
+        density_fit_parameters: Optional[Sequence],
+        temperature_fit_method: Optional[Union[str, ProfileFitLike]],
+        temperature_fit_parameters: Optional[Sequence],
+        interp_order: Union[str, int],
+        interp_smoothing: int,
+
+        # Plotting flags
+        figure_flag: bool,
+        further_analysis_flag: bool,
+        detailed_analysis_flag: bool,
+
+        # Additional flags
+        quick_run: bool,
+        return_dt_field: bool,
+
+        # Extra kwargs for parsing
+        **kwargs,
+        ):
+
+        ##################################################
+        #
+        # Main parameters
+        #
+        ##################################################
+
+        self.geometry = geometry
+
+        # TORBEAM antenna angles are anti-clockwise from negative X-axis,
+        # so we need to rotate the toroidal angle by pi. This will take
+        # care of the direction of the beam. The poloidal angle is also
+        # reversed from its usual sense, so we can just flip it by adding
+        # a minus sign
+        self.poloidal_launch_angle_deg_Torbeam = poloidal_launch_angle_Torbeam
+        self.poloidal_launch_angle_rad_Torbeam = np.deg2rad(self.poloidal_launch_angle_deg_Torbeam)
+        self.toroidal_launch_angle_deg_Torbeam = toroidal_launch_angle_Torbeam
+        self.toroidal_launch_angle_rad_Torbeam = np.deg2rad(self.toroidal_launch_angle_deg_Torbeam)
+        # self.poloidal_launch_angle_rad = -self.poloidal_launch_angle_rad_Torbeam
+        # self.poloidal_launch_angle_deg = np.rad2deg(self.poloidal_launch_angle_rad)
+        # self.toroidal_launch_angle_rad = self.toroidal_launch_angle_rad_Torbeam + np.pi
+        # self.toroidal_launch_angle_deg = np.rad2deg(self.toroidal_launch_angle_rad)
+
+        self.launch_frequency_GHz = self._check_positive("launch_freq_GHz", launch_freq_GHz)
+        self.launch_angular_frequency = freq_GHz_to_angular_frequency(self.launch_frequency_GHz)
+        self.launch_wavenumber = angular_frequency_to_wavenumber(self.launch_angular_frequency)
+        self.launch_beam_width = self._check_positive("launch_beam_width", launch_beam_width)
+        self.launch_beam_curvature = launch_beam_curvature
+        self.q_launch = q_launch
+        self.mode_flag_launch = mode_flag_launch
+
+        ##################################################
+        #
+        # Solver settings and finite-difference parameters
+        #
+        ##################################################
+
+        self.launch_flag = launch_flag
+        self.boundary_flag = boundary_flag
+        self.relativistic_flag = relativistic_flag
+        self.auto_delta_sign = auto_delta_sign
+        self.len_tau = self._check_positive("len_tau", len_tau)
+        self.rtol = rtol
+        self.atol = atol
+        self.poloidal_flux_enter = self._check_positive("poloidal_flux_enter", poloidal_flux_enter)
+        self.poloidal_flux_zero_density = self._check_positive("poloidal_flux_zero_density", poloidal_flux_zero_density)
+        self.poloidal_flux_zero_temperature = self._check_positive("poloidal_flux_zero_temperature", poloidal_flux_zero_temperature)
+
+        ##################################################
+        #
+        # Data input, output, plotting arguments
+        #
+        ##################################################
+
+        self.find_B_method = find_B_method if isinstance(find_B_method, str) else str(type(find_B_method))
+        self.magnetic_data_path = self._check_data_path("magnetic", magnetic_data_path)
+        self.input_filename_suffix = input_filename_suffix
+        (self.interp_order_magnetic_data_str,
+         self.interp_order_magnetic_data_int) = self._check_interp_order("magnetic", interp_order)
+        _, self.interp_order_ne_data = self._check_interp_order("ne", interp_order) # TO REMOVE -- is this needed? or same interp_order for B and ne?
+        self.interp_smoothing = interp_smoothing
+        self.shot = shot
+        self.equil_time = equil_time
+
+        self.ne_data_path = self._check_data_path("ne", ne_data_path)
+        self.density_fit_parameters = density_fit_parameters
+        self.density_fit_method = density_fit_method
+
+        self.Te_data_path = self._check_data_path("Te", Te_data_path)
+        self.temperature_fit_parameters = temperature_fit_parameters
+        self.temperature_fit_method = temperature_fit_method
+
+        self.output_path = self._check_data_path("output", output_path)
+        self.output_filename_suffix = output_filename_suffix
+
+        self.figure_flag = figure_flag
+        self.further_analysis_flag = further_analysis_flag
+        self.detailed_analysis_flag = detailed_analysis_flag
+
+        # Untested stuff # TO REMOVE?
+        self._check_mode_flag_launch_and_launch_flag(mode_flag_launch=mode_flag_launch, launch_flag=launch_flag)
+        self._unpack_kwargs_for_circular_flux_surfaces(extras = kwargs)
+        self._unpack_kwargs_for_plasma_launch(extras = kwargs)
+        self._unpack_unused_kwargs(extras = kwargs)
+
+        ##################################################
+        #
+        # Geometry-specific parameters
+        #
+        ##################################################
+
+        if geometry == "cylindrical":
+            (self.delta_R,
+             self.delta_Z,
+             self.delta_K_R,
+             self.delta_K_zeta,
+             self.delta_K_Z) = deltas_cylindrical
+            
+            self.deltas = deltas_cylindrical
+        
+        elif geometry == "cartesian":
+            (self.delta_X,
+             self.delta_Y,
+             self.delta_Z,
+             self.delta_K_X,
+             self.delta_K_Y,
+             self.delta_K_Z) = deltas_cartesian
+            
+            self.deltas = deltas_cartesian
+    
+    ##################################################
+    #
+    # PRIMARY INPUT CHECKS (for beam_me_up_3D)
+    # For data passed at first call of beam_me_up_3D
+    #
+    # TODO:
+    #    1) Need to put data pathway stuff here
+    #
+    #    2a) Put the density_fit_parameters and
+    #        density_fit_method stuff here
+    #
+    #    2b) Put ne_data checks here:
+    #        - rho must be sorted
+    #        - ne must be sorted???
+    #        - must polflux_zero_density be less than
+    #          the last polflux coord in ne.dat?
+    #
+    #    3) Need to put temperature data stuff here
+    #
+    ##################################################
+
+    def _check_positive(self, name: str, value: Union[int, float]) -> Union[int, float]:
+        if value <= 0: raise ValueError(f"`{name}` must be positive, but got {value}")
+        else: return value
+    
+    def _check_data_path(self, name: Literal["magnetic", "ne", "Te", "output"], path: Union[str, Path]) -> Path:
+        path = Path(path)
+        if name in ["magnetic", "ne", "Te"] and not path.is_dir():
+            raise ValueError(f"`{name}_data_path` must be a valid directory")
+        elif name in ["output"] and not path.is_dir():
+            print(f"`{name}_data_path` does not exist. Creating the folder now")
+            os.makedirs(path)
+        
+        return path
+
+    def _check_interp_order(self, name: str, order: Union[str, int]) -> Tuple[str, int]:
+        _valid_interp_orders_int = {1: "linear", 3: "cubic", 5: "quintic"}
+        _valid_interp_orders_str = dict((v,k) for k, v in _valid_interp_orders_int.items())
+
+        if   order in _valid_interp_orders_str: new_orders = order, _valid_interp_orders_str[order]
+        elif order in _valid_interp_orders_int: new_orders = _valid_interp_orders_int[order], order
+        else:
+            new_orders = "quintic", 5
+            log.warning(f"""
+    `interp_order` for `{name}` data must be one of {list(_valid_interp_orders_int) + list(_valid_interp_orders_str)}, but got {order}
+    
+    Ignoring user-specified argument and setting `interp_order` = `quintic`. This may or may not cause issues
+    """)
+                
+        return new_orders
+
+    def _check_mode_flag_launch_and_launch_flag(self, mode_flag_launch: VALID_LAUNCH_MODE_FLAGS, launch_flag: VALID_LAUNCH_FLAGS):
+        if launch_flag == "plasma" and mode_flag_launch in ["O", "X"]:
+            raise ValueError(f"""
+    `mode_flag` (at launch) cannot be "O" or "X" if `launch_flag` is "plasma", but got `mode_flag` = {mode_flag_launch} and `launch_flag` = {launch_flag}
+    """)
+    
+    def _unpack_kwargs_for_circular_flux_surfaces(self, **extras):
+        B_T_axis       = extras.pop("B_T_axis", None)
+        B_p_a          = extras.pop("B_p_a", None)
+        R_axis         = extras.pop("R_axis", None)
+        minor_radius_a = extras.pop("minor_radius_a", None)
+        
+        # TO REMOVE -- do we do it like this?
+        # either all of them are defined, or none of them are
+        # should also insert type hinting and checks
+        _sum = bool(B_T_axis) + bool(B_p_a) + bool(R_axis) + bool(minor_radius_a)
+        if _sum not in [0, 4]: raise ValueError(f"""
+    For circular flux surfaces, all variables must be specified or None, but got:
+       - B_T_axis = {B_T_axis}
+       - B_p_a = {B_p_a}
+       - R_axis = {R_axis}
+       - minor_radius_a = {minor_radius_a}
+    """)
+        elif _sum == 4: self.circular_flux_surfaces_flag = True
+        else:           self.circular_flux_surfaces_flag = False
+        
+        self.B_T_axis = B_T_axis
+        self.B_p_a = B_p_a
+        self.R_axis = R_axis
+        self.minor_radius_a = minor_radius_a
+    
+    def _unpack_kwargs_for_plasma_launch(self, **extras):
+        K_plasmaLaunch_cartesian = extras.pop("plasmaLaunch_K_cartesian", np.zeros(3))
+        Psi_3D_plasmaLaunch_labframe_cartesian = extras.pop("plasmaLaunch_Psi_3D_lab_cartesian", np.zeros([3,3]))
+
+        if isinstance(K_plasmaLaunch_cartesian, list): K_plasmaLaunch_cartesian = np.array(K_plasmaLaunch_cartesian)
+        if isinstance(Psi_3D_plasmaLaunch_labframe_cartesian, list): Psi_3D_plasmaLaunch_labframe_cartesian = np.array(Psi_3D_plasmaLaunch_labframe_cartesian)
+
+        _invalid = np.all(K_plasmaLaunch_cartesian == 0) or np.all(Psi_3D_plasmaLaunch_labframe_cartesian == 0)
+
+        if self.launch_flag == "plasma" and _invalid: raise ValueError(f"""
+    For plasma launch, `plasmaLaunch_K_cartesian` and `plasmaLaunch_Psi_3D_lab_cartesian`
+    must be specified (non-zero) if `launch_flag` = "plasma", but got:
+       - launch_flag = {self.launch_flag}
+       - plasmaLaunch_K_cartesian = {K_plasmaLaunch_cartesian}
+       - plasmaLaunch_Psi_3D_lab_cartesian = {Psi_3D_plasmaLaunch_labframe_cartesian}
+    """)
+        
+        self.K_plasmaLaunch_cartesian = K_plasmaLaunch_cartesian
+        self.Psi_3D_plasmaLaunch_labframe_cartesian = Psi_3D_plasmaLaunch_labframe_cartesian
+    
+    def _unpack_unused_kwargs(self, **extras):
+        extras_copy = extras.copy()
+
+        if extras_copy:
+            extras_copy.pop("create_magnetic_geometry")
+        
+        if extras_copy:
+            _indent = max(len(max(extras, key=len)), len("keyword")) + 3
+            _printmsg = "\n".join(f"       - {k:<{_indent}} {v}" for k, v in extras_copy.items())
+            
+            raise ValueError(f"""
+    There are unsued keyword arguments that do not correspond to any function:
+         {"keyword":<{_indent}} value \n{_printmsg}
+    """)
+    
+    ##################################################
+    #
+    # POST-INITIALISATION FUNCTIONS
+    #
+    ##################################################
+    
+    def set_experimental_profiles(self):
+        if (self.density_fit_parameters is None) and (self.density_fit_method in [None, "smoothing-spline-file"]):
+            self.ne_filename = self.ne_data_path / f"ne{self.input_filename_suffix}.dat"
+            self.density_fit_parameters = [self.ne_filename, self.interp_order_ne_data, self.interp_smoothing]
+
+            # TO REMOVE?
+            # FIXME: Read data so it can be saved later
+            ne_data = np.fromfile(self.ne_filename, dtype=float, sep="   ")
+            # ne_data_density_array = ne_data[2::2]
+            # ne_data_radialcoord_array = ne_data[1::2]
+        else: self.ne_filename = None

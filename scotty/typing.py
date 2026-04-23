@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0
 
 from os import PathLike as os_PathLike
-from typing import Union
+from typing import Union, Tuple
 import numpy as np
 
 try:
@@ -13,4 +13,5 @@ except ImportError:
     FloatArray = np.ndarray  # type: ignore
 
 ArrayLike = Union[float, FloatArray]
+CoordinateLike = Union[FloatArray, Tuple[ArrayLike, ArrayLike, ArrayLike]]
 PathLike = Union[os_PathLike, str]

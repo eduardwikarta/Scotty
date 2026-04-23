@@ -1,0 +1,450 @@
+import logging
+import numpy as np
+from scotty.checks_v4 import VALID_FIELDS
+from scotty.derivatives import derivative
+from scotty.fun_general_v4 import find_normalised_plasma_freq, find_normalised_gyro_freq, angular_frequency_to_wavenumber, dot
+from scotty.geometry_v4 import MagneticField_Cylindrical, MagneticField_Cartesian
+from scotty.profile_fit import ProfileFitLike
+from scotty.typing import ArrayLike, FloatArray
+from typing import Any, Callable, Dict, Literal, Optional, Tuple, Union, cast
+
+log = logging.getLogger(__name__)
+
+##################################################
+#
+# DIELECTRIC CLASS
+#
+##################################################
+
+class DielectricTensor:
+    def __init__(
+        self,
+        launch_angular_freq: float,
+        B_magnitude: ArrayLike,
+        electron_density: ArrayLike,
+        temperature: Optional[ArrayLike] = None):
+
+        plasma_freq_2 = find_normalised_plasma_freq(launch_angular_freq, electron_density, temperature)**2
+        gyro_freq = find_normalised_gyro_freq(launch_angular_freq, B_magnitude, temperature)
+        gyro_freq_2 = gyro_freq**2
+
+        self._epsilon_bb = 1 - plasma_freq_2
+        self._epsilon_11 = 1 - plasma_freq_2 / (1 - gyro_freq_2)
+        self._epsilon_12 = plasma_freq_2 * gyro_freq_2 / (1 - gyro_freq_2)
+    
+    @property
+    def e_bb(self) -> ArrayLike: return self._epsilon_bb
+
+    @property
+    def e_11(self) -> ArrayLike: return self._epsilon_11
+
+    @property
+    def e_12(self) -> ArrayLike: return self._epsilon_12
+
+
+
+class Hamiltonian:
+    r"""Functor to evaluate derivatives of the Hamiltonian, H, at a given set
+    of points.
+
+    Scotty calculates derivatives using a grid-free finite difference approach. The
+    Hamiltonian is evaluated at, essentially, an arbitrary set of points around the
+    location we wish to get the derivatives at. In practice we define stencils as
+    relative offsets from a central point, and the evaluation points are the product
+    of the spacing in a given direction with the stencil offsets. By carefully
+    choosing our stencils and evaluating all of the derivatives at once, we can
+    reuse evaluations of :math:`H` between derivatives, saving a lot of computation.
+
+    The stencils are defined as a `dict` with a `tuple` of offsets as keys and `float`
+    weights as values. For example, the `CFD1_stencil`::
+        {(1,): 0.5, (-1,): -0.5}
+
+    defines the second-order first central-difference:
+        f' = \frac{f(x + \delta_x) - f(x - \delta_x)}{2\delta_x}
+
+    The keys are tuples so that we can iterate over the offsets for the mixed
+    second derivatives.
+
+    The stencils have been chosen to maximise the reuse of Hamiltonian
+    evaluations without sacrificing accuracy.
+    """
+
+    wavenumber: float
+
+    def __init__(
+        self,
+        launch_angular_freq: float,
+        mode_flag: Literal[1, -1],
+        deltas: FloatArray,
+        field: VALID_FIELDS,
+        density_fit: ProfileFitLike,
+        temperature_fit: Optional[ProfileFitLike] = None):
+    
+        self.angular_frequency = launch_angular_freq
+        self.wavenumber = angular_frequency_to_wavenumber(launch_angular_freq)
+        self.mode_flag = mode_flag
+        self.field = field
+        self.density = density_fit
+        self.temperature = temperature_fit
+
+        if isinstance(field, MagneticField_Cylindrical):
+            delta_R, delta_Z, delta_K_R, delta_K_zeta, delta_K_Z = deltas
+            self.spacings = {"R": delta_R, "Z": delta_Z, "K_R": delta_K_R, "K_zeta": delta_K_zeta, "K_Z": delta_K_Z}
+            def _B_vec(R,_,Z): return np.array([field.B_R(R,_,Z), field.B_T(R,_,Z), field.B_Z(R,_,Z)]) # type: ignore
+            def _K_vec(K_R, K_zeta, K_Z, q_R): return np.array([K_R, K_zeta/q_R, K_Z]) # type: ignore
+
+        elif isinstance(field, MagneticField_Cartesian):
+            delta_X, delta_Y, delta_Z, delta_K_X, delta_K_Y, delta_K_Z = deltas
+            self.spacings = {"X": delta_X, "Y": delta_Y, "Z": delta_Z, "K_X": delta_K_X, "K_Y": delta_K_Y, "K_Z": delta_K_Z}
+            def _B_vec(X,Y,Z): return np.array([field.B_X(X,Y,Z), field.B_Y(X,Y,Z), field.B_Z(X,Y,Z)]) # type: ignore
+            def _K_vec(K_X, K_Y, K_Z, _): return np.array([K_X, K_Y, K_Z]) # type: ignore
+        
+        log.debug(f"""
+        ##################################################
+        #
+        # Creating Hamiltonian with:
+        #   - mode_flag = {self.mode_flag}
+        #   - |w_launch| = {self.angular_frequency}
+        #   - |K_launch| = {self.wavenumber}
+        #   - (finite difference) spacings = {self.spacings}
+        #   - field type = {type(field)}
+        #   - density fit type = {type(density_fit)}
+        #   - temperature fit type = {type(temperature_fit)}
+        #
+        ##################################################
+        """)
+
+        # Abstracting and then creating the following methods
+        def mag(*args: ArrayLike, func: Callable) -> FloatArray: return np.linalg.norm(func(*args), axis=0)
+        def hat(*args: ArrayLike, func: Callable) -> FloatArray: return func(*args) / np.linalg.norm(func(*args), axis=0)
+        
+        self._B_vec = _B_vec
+        self._B_mag = lambda *args: mag(*args, func=self._B_vec)
+        self._B_hat = lambda *args: hat(*args, func=self._B_vec)
+
+        self._K_vec = _K_vec
+        self._K_mag = lambda *args: mag(*args, func=self._K_vec)
+        self._K_hat = lambda *args: hat(*args, func=self._K_vec)
+
+    def __call__(self, q: FloatArray, K: FloatArray) -> FloatArray:
+        polflux = self.field.polflux(*q)
+        electron_density = self.density(polflux)
+        temperature = self.temperature(polflux) if self.temperature else None
+
+        B_magnitude = self._B_mag(*q)
+        b_hat = self._B_hat(*q)
+        K_magnitude = self._K_mag(*K, q[0])
+        K_hat = self._K_hat(*q, K[1])
+
+        if np.size(q[0]) == 1: sin_theta_m = np.dot(b_hat, K_hat)
+        else:                  sin_theta_m = dot(b_hat.T, K_hat.T)
+        sin_theta_m_sq = cast(ArrayLike, sin_theta_m**2)
+
+        epsilon = DielectricTensor(self.angular_frequency, B_magnitude, electron_density, temperature)
+        e_bb, e_11, e_12 = epsilon.e_bb, epsilon.e_11, epsilon.e_12
+
+        Booker_alpha = (e_bb * sin_theta_m_sq) + e_11 * (1 - sin_theta_m_sq)
+        Booker_beta  = (-e_11 * e_bb * (1 + sin_theta_m_sq)) - (e_11**2 - e_12**2) * (1 - sin_theta_m_sq)
+        Booker_gamma = e_bb * (e_11**2 - e_12**2)
+
+        H_discriminant = np.maximum(np.zeros_like(Booker_beta), Booker_beta**2 - 4 * Booker_alpha * Booker_gamma)
+
+        H_Booker = (K_magnitude / self.wavenumber)**2 + (Booker_beta - self.mode_flag * np.sqrt(H_discriminant)) / (2 * Booker_alpha)
+
+        log.trace(f"""
+            ##################################################
+            #
+            # Calling Hamiltonian with:
+            #   - {"[R, zeta, Z]" if isinstance(self.field, MagneticField_Cylindrical) else "[X, Y, Z]"} = {q}
+            #   - {"[K_R, K_zeta, K_Z]" if isinstance(self.field, MagneticField_Cylindrical) else "[K_X, K_Y, K_Z]"} = {K}
+            #
+            # Calculated values:
+            #   - pol. flux = {polflux}
+            #   - n_e = {electron_density}
+            #   - T_e = {temperature}
+            #   - {"[B_R, B_T, B_Z]" if isinstance(self.field, MagneticField_Cylindrical) else "[B_X, B_Y, B_Z]"} = {B_magnitude*b_hat}
+            #
+            #   - sin(theta_m)^2 = {sin_theta_m_sq}
+            #   - |theta_m| (in rad) = {np.arcsin(np.sqrt(sin_theta_m_sq))}
+            #   - |theta_m| (in deg) = {np.rad2deg(np.arcsin(np.sqrt(sin_theta_m_sq)))}
+            #
+            #   - e_11 = {epsilon.e_11}
+            #   - e_12 = {epsilon.e_12}
+            #   - e_bb = {epsilon.e_bb}
+            #
+            #   - Booker_a (a) = {Booker_alpha}
+            #   - Booker_b (b) = {Booker_beta}
+            #   - Booker_g (g) = {Booker_gamma}
+            #   - b^2 - 4ag = {H_discriminant}
+            #   - H_Booker = {H_Booker}
+            #
+            ##################################################
+            """)
+
+        return H_Booker
+    
+    from numpy.typing import NDArray
+    def derivatives(self, q: FloatArray, K: FloatArray, second_order: bool = False) -> Dict[str, FloatArray]:
+        """Evaluate the first-order derivative in all directions at the given
+        point(s), and optionally the second-order ones too
+        """
+        
+        def apply_stencil(dims: Tuple[str, ...], stencil: str): return derivative(self, dims, starts, self.spacings, stencil)
+
+        # Capture the location we want the derivatives at
+        if isinstance(self.field, MagneticField_Cylindrical):
+            R, _, Z = q
+            K_R, K_zeta, K_Z = K
+            starts = {"R": R, "Z": Z, "K_R": K_R, "K_zeta": K_zeta, "K_Z": K_Z}
+
+            dH_dR = apply_stencil(("R",), "d1_FFD2")
+            derivatives = {
+                "dH_dR":     dH_dR,
+                "dH_dzeta":  np.zeros_like(dH_dR),
+                "dH_dZ":     apply_stencil(("Z",), "d1_FFD2"),
+                "dH_dKR":    apply_stencil(("K_R",), "d1_CFD2"),
+                "dH_dKzeta": apply_stencil(("K_zeta",), "d1_CFD2"),
+                "dH_dKZ":    apply_stencil(("K_Z",), "d1_CFD2"),
+            }
+
+            if second_order:
+                derivatives.update({
+                    "d2H_dR2":        apply_stencil(("R", "R"), "d2_FFD2"),
+                    "d2H_dZ2":        apply_stencil(("Z", "Z"), "d2_FFD2"),
+                    "d2H_dKR2":       apply_stencil(("K_R", "K_R"), "d2_CFD2"),
+                    "d2H_dKzeta2":    apply_stencil(("K_zeta", "K_zeta"), "d2_CFD2"),
+                    "d2H_dKZ2":       apply_stencil(("K_Z", "K_Z"), "d2_CFD2"),
+                    "d2H_dR_dZ":      apply_stencil(("R", "Z"), "d1d1_FFD_FFD2"),
+                    "d2H_dR_dKR":     apply_stencil(("R", "K_R"), "d1d1_FFD_CFD2"),
+                    "d2H_dR_dKzeta":  apply_stencil(("R", "K_zeta"), "d1d1_FFD_CFD2"),
+                    "d2H_dR_dKZ":     apply_stencil(("R", "K_Z"), "d1d1_FFD_CFD2"),
+                    "d2H_dZ_dKR":     apply_stencil(("Z", "K_R"), "d1d1_FFD_CFD2"),
+                    "d2H_dZ_dKzeta":  apply_stencil(("Z", "K_zeta"), "d1d1_FFD_CFD2"),
+                    "d2H_dZ_dKZ":     apply_stencil(("Z", "K_Z"), "d1d1_FFD_CFD2"),
+                    "d2H_dKR_dKZ":    apply_stencil(("K_R", "K_Z"), "d1d1_CFD_CFD2"),
+                    "d2H_dKR_dKzeta": apply_stencil(("K_R", "K_zeta"), "d1d1_CFD_CFD2"),
+                    "d2H_dKzeta_dKZ": apply_stencil(("K_zeta", "K_Z"), "d1d1_CFD_CFD2"),
+                })
+        
+        # equivalent to elif isinstance(self.field, MagneticField_Cartesian):
+        # but written as else to stop the type checker complaining
+        else: 
+            X, Y, Z = q
+            K_X, K_Y, K_Z = K
+            starts = {"X": X, "Y": Y, "Z": Z, "K_X": K_X, "K_Y": K_Y, "K_Z": K_Z}
+
+            derivatives = {
+                "dH_dX":     apply_stencil(("X",), "d1_FFD2"),
+                "dH_dY":     apply_stencil(("Y",), "d1_FFD2"),
+                "dH_dZ":     apply_stencil(("Z",), "d1_FFD2"),
+                "dH_dKX":    apply_stencil(("K_X",), "d1_CFD2"),
+                "dH_dKY":    apply_stencil(("K_Y",), "d1_CFD2"),
+                "dH_dKZ":    apply_stencil(("K_Z",), "d1_CFD2"),
+            }
+
+            if second_order:
+                derivatives.update({
+                    "d2H_dX2":     apply_stencil(("X", "X"), "d2_FFD2"),
+                    "d2H_dY2":     apply_stencil(("Y", "Y"), "d2_FFD2"),
+                    "d2H_dZ2":     apply_stencil(("Z", "Z"), "d2_FFD2"),
+                    "d2H_dX_dY":   apply_stencil(("X", "Y"), "d1d1_FFD_FFD2"),
+                    "d2H_dX_dZ":   apply_stencil(("X", "Z"), "d1d1_FFD_FFD2"),
+                    "d2H_dY_dZ":   apply_stencil(("Y", "Z"), "d1d1_FFD_FFD2"),
+                    "d2H_dKX2":    apply_stencil(("K_X", "K_X"), "d2_CFD2"),
+                    "d2H_dKY2":    apply_stencil(("K_Y", "K_Y"), "d2_CFD2"),
+                    "d2H_dKZ2":    apply_stencil(("K_Z", "K_Z"), "d2_CFD2"),
+                    "d2H_dKX_dKY": apply_stencil(("K_X", "K_Y"), "d1d1_CFD_CFD2"),
+                    "d2H_dKX_dKZ": apply_stencil(("K_X", "K_Z"), "d1d1_CFD_CFD2"),
+                    "d2H_dKY_dKZ": apply_stencil(("K_Y", "K_Z"), "d1d1_CFD_CFD2"),
+                    "d2H_dX_dKX":  apply_stencil(("X", "K_X"), "d1d1_FFD_CFD2"),
+                    "d2H_dX_dKY":  apply_stencil(("X", "K_Y"), "d1d1_FFD_CFD2"),
+                    "d2H_dX_dKZ":  apply_stencil(("X", "K_Z"), "d1d1_FFD_CFD2"),
+                    "d2H_dY_dKX":  apply_stencil(("Y", "K_X"), "d1d1_FFD_CFD2"),
+                    "d2H_dY_dKY":  apply_stencil(("Y", "K_Y"), "d1d1_FFD_CFD2"),
+                    "d2H_dY_dKZ":  apply_stencil(("Y", "K_Z"), "d1d1_FFD_CFD2"),
+                    "d2H_dZ_dKX":  apply_stencil(("Z", "K_X"), "d1d1_FFD_CFD2"),
+                    "d2H_dZ_dKY":  apply_stencil(("Z", "K_Y"), "d1d1_FFD_CFD2"),
+                    "d2H_dZ_dKZ":  apply_stencil(("Z", "K_Z"), "d1d1_FFD_CFD2"),
+                })
+
+        if log.isEnabledFor(5):
+            _printmsg = "\n".join(f"            #   - {k} = {v}" for k, v in derivatives.items())
+            log.trace(f"""
+            ##################################################
+            #
+            # Calling Hamiltonian.derivatives with:
+            #   - {"[R, zeta, Z]" if isinstance(self.field, MagneticField_Cylindrical) else "[X, Y, Z]"} = {q}
+            #   - {"[K_R, K_zeta, K_Z]" if isinstance(self.field, MagneticField_Cylindrical) else "[K_X, K_Y, K_Z]"} = {K}
+            #
+            # Calculated values: \n{_printmsg}
+            #
+            ##################################################
+            """)
+        
+        return derivatives
+
+
+
+def initialise_hamiltonians(
+    launch_angular_freq: float,
+    deltas: FloatArray,
+    field: VALID_FIELDS,
+    density_fit: ProfileFitLike,
+    temperature_fit: Optional[ProfileFitLike] = None,
+) -> Tuple[Hamiltonian, Hamiltonian]:
+    
+    log.info(f"Initialising Hamiltonians for `mode_flag` = +1 and -1")
+
+    H_pos1 = Hamiltonian(
+        launch_angular_freq = launch_angular_freq,
+        mode_flag = 1,
+        deltas = deltas,
+        field = field,
+        density_fit = density_fit,
+        temperature_fit = temperature_fit,
+    )
+
+    H_neg1 = Hamiltonian(
+        launch_angular_freq = launch_angular_freq,
+        mode_flag = -1,
+        deltas = deltas,
+        field = field,
+        density_fit = density_fit,
+        temperature_fit = temperature_fit,
+    )
+    
+    return H_pos1, H_neg1
+
+
+
+# def assign_hamiltonians(
+#     mode_flag_launch: VALID_LAUNCH_MODE_FLAGS,
+#     mode_flag_initial: Literal[1, -1],
+#     hamiltonian_pos1: Hamiltonian,
+#     hamiltonian_neg1: Hamiltonian,
+#     q_initial: FloatArray,
+#     K_initial: FloatArray,
+#     tol_H: float = 1e-5,
+# ) -> Tuple[Hamiltonian, Hamiltonian, Literal[1, -1]]:
+    
+
+    
+#     return
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+def hessians(field: VALID_FIELDS, dH: dict) -> Tuple[FloatArray, FloatArray, FloatArray]:
+    r"""
+    Given a dictionary containing the second derivatives of the Hamiltonian (from
+    hamiltonian.derivatives with second_order = True), compute the elements of the
+    Hessian of the Hamiltonian:
+
+    .. math::
+          \begin{gather}
+            \nabla \nabla H \\
+            \nabla_K \nabla H \\
+            \nabla_K \nabla_K H \\
+          \end{gather}
+    """
+
+    def reshape(array: FloatArray):
+        """Such that shape is [points,3,3] instead of [3,3,points]"""
+        return array if array.ndim == 2 else np.moveaxis(np.squeeze(array), 2, 0)
+
+    if isinstance(field, MagneticField_Cylindrical):
+        d2H_dR2        = dH["d2H_dR2"]
+        d2H_dZ2        = dH["d2H_dZ2"]
+        d2H_dKR2       = dH["d2H_dKR2"]
+        d2H_dKzeta2    = dH["d2H_dKzeta2"]
+        d2H_dKZ2       = dH["d2H_dKZ2"]
+        d2H_dR_dZ      = dH["d2H_dR_dZ"]
+        d2H_dKR_dR     = dH["d2H_dR_dKR"]
+        d2H_dKzeta_dR  = dH["d2H_dR_dKzeta"]
+        d2H_dKZ_dR     = dH["d2H_dR_dKZ"]
+        d2H_dKR_dZ     = dH["d2H_dZ_dKR"]
+        d2H_dKzeta_dZ  = dH["d2H_dZ_dKzeta"]
+        d2H_dKZ_dZ     = dH["d2H_dZ_dKZ"]
+        d2H_dKR_dKZ    = dH["d2H_dKR_dKZ"]
+        d2H_dKR_dKzeta = dH["d2H_dKR_dKzeta"]
+        d2H_dKzeta_dKZ = dH["d2H_dKzeta_dKZ"]
+
+        zeros = np.zeros_like(d2H_dR2)
+
+        grad_grad_H = reshape(np.array([
+            [d2H_dR2,        zeros,          d2H_dR_dZ     ],
+            [zeros,          zeros,          zeros         ],
+            [d2H_dR_dZ,      zeros,          d2H_dZ2       ],
+        ]))
+
+        gradK_grad_H = reshape(np.array([
+            [d2H_dKR_dR,     zeros,          d2H_dKR_dZ    ],
+            [d2H_dKzeta_dR,  zeros,          d2H_dKzeta_dZ ],
+            [d2H_dKZ_dR,     zeros,          d2H_dKZ_dZ    ],
+        ]))
+
+        gradK_gradK_H = reshape(np.array([
+            [d2H_dKR2,       d2H_dKR_dKzeta, d2H_dKR_dKZ   ],
+            [d2H_dKR_dKzeta, d2H_dKzeta2,    d2H_dKzeta_dKZ],
+            [d2H_dKR_dKZ,    d2H_dKzeta_dKZ, d2H_dKZ2      ],
+        ]))
+    
+    # equivalent to elif isinstance(self.field, MagneticField_Cartesian):
+    # but written as else to stop the type checker complaining
+    else:
+        d2H_dX2     = dH["d2H_dX2"]
+        d2H_dY2     = dH["d2H_dY2"]
+        d2H_dZ2     = dH["d2H_dZ2"]
+        d2H_dX_dY   = dH["d2H_dX_dY"]
+        d2H_dX_dZ   = dH["d2H_dX_dZ"]
+        d2H_dY_dZ   = dH["d2H_dY_dZ"]
+        d2H_dKX2    = dH["d2H_dKX2"]
+        d2H_dKY2    = dH["d2H_dKY2"]
+        d2H_dKZ2    = dH["d2H_dKZ2"]
+        d2H_dKX_dKY = dH["d2H_dKX_dKY"]
+        d2H_dKX_dKZ = dH["d2H_dKX_dKZ"]
+        d2H_dKY_dKZ = dH["d2H_dKY_dKZ"]
+        d2H_dX_dKX  = dH["d2H_dX_dKX"]
+        d2H_dX_dKY  = dH["d2H_dX_dKY"]
+        d2H_dX_dKZ  = dH["d2H_dX_dKZ"]
+        d2H_dY_dKX  = dH["d2H_dY_dKX"]
+        d2H_dY_dKY  = dH["d2H_dY_dKY"]
+        d2H_dY_dKZ  = dH["d2H_dY_dKZ"]
+        d2H_dZ_dKX  = dH["d2H_dZ_dKX"]
+        d2H_dZ_dKY  = dH["d2H_dZ_dKY"]
+        d2H_dZ_dKZ  = dH["d2H_dZ_dKZ"]
+        
+        grad_grad_H = reshape(np.array([
+            [d2H_dX2,       d2H_dX_dY,     d2H_dX_dZ],
+            [d2H_dX_dY,     d2H_dY2,       d2H_dY_dZ],
+            [d2H_dX_dZ,     d2H_dY_dZ,     d2H_dZ2  ]
+        ]))
+
+        gradK_grad_H = reshape(np.array([
+            [d2H_dX_dKX,    d2H_dY_dKX,    d2H_dZ_dKX],
+            [d2H_dX_dKY,    d2H_dY_dKY,    d2H_dZ_dKY],
+            [d2H_dX_dKZ,    d2H_dY_dKZ,    d2H_dZ_dKZ]
+        ]))
+
+        gradK_gradK_H = reshape(np.array([
+            [d2H_dKX2,      d2H_dKX_dKY,   d2H_dKX_dKZ],
+            [d2H_dKX_dKY,   d2H_dKY2,      d2H_dKY_dKZ],
+            [d2H_dKX_dKZ,   d2H_dKY_dKZ,   d2H_dKZ2   ]
+        ]))
+
+    return grad_grad_H, gradK_grad_H, gradK_gradK_H

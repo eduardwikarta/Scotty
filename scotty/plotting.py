@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.lines as mlines
 import matplotlib.pyplot as plt
 import xarray as xr
-from datatree import DataTree
+from xarray import DataTree
 from scipy.interpolate import CubicSpline
 
 from .analysis import beam_width
@@ -17,7 +17,6 @@ from scotty.typing import FloatArray, PathLike
 
 from matplotlib.widgets import Slider
 from scotty.fun_general import find_q_lab_Cartesian
-import datatree
 
 
 def maybe_make_axis(ax: Optional[plt.Axes], *args, **kwargs) -> plt.Axes:
@@ -254,7 +253,7 @@ def plot_dispersion_relation(
     ## The title of 'col' in H_eigvals is a misnomer
     ax.plot(
         analysis.l_lc,
-        abs(analysis.H_eigvals.sel(col="R")),
+        abs(analysis.H_eigvals.sel(solution="solution_1")),
         color="pink",
         linestyle="-",
         linewidth=4,
@@ -262,7 +261,7 @@ def plot_dispersion_relation(
     )
     ax.plot(
         analysis.l_lc,
-        abs(analysis.H_eigvals.sel(col="zeta")),
+        abs(analysis.H_eigvals.sel(solution="solution_2")),
         color="lightgreen",
         linestyle="-",
         linewidth=4,
@@ -270,7 +269,7 @@ def plot_dispersion_relation(
     )
     ax.plot(
         analysis.l_lc,
-        abs(analysis.H_eigvals.sel(col="Z")),
+        abs(analysis.H_eigvals.sel(solution="solution_3")),
         color="gray",
         linestyle="-",
         linewidth=4,
@@ -279,7 +278,7 @@ def plot_dispersion_relation(
 
     ax.plot(
         analysis.l_lc,
-        abs(analysis.H_1_Cardano),
+        abs(analysis.H_Cardano.sel(solution="solution_1")),
         color="k",
         linestyle=":",
         linewidth=4,
@@ -287,7 +286,7 @@ def plot_dispersion_relation(
     )
     ax.plot(
         analysis.l_lc,
-        abs(analysis.H_2_Cardano),
+        abs(analysis.H_Cardano.sel(solution="solution_2")),
         color="r",
         linestyle=":",
         linewidth=4,
@@ -295,7 +294,7 @@ def plot_dispersion_relation(
     )
     ax.plot(
         analysis.l_lc,
-        abs(analysis.H_3_Cardano),
+        abs(analysis.H_Cardano.sel(solution="solution_3")),
         color="g",
         linestyle=":",
         linewidth=4,
@@ -708,8 +707,8 @@ def plot_3D_beam_profile_3D_plotting(
         title += f"\ntime = {title_time}ms"
         title += f"\nmode = {title_mode}"
         title += f"\nfreq = {title_freq:.1f}GHz"
-        title += f"\npol = {title_pol:.1f}\u00B0"
-        title += f"\ntor = {title_tor:.1f}\u00B0"
+        title += f"\npol = {title_pol:.1f}\u00b0"
+        title += f"\ntor = {title_tor:.1f}\u00b0"
         title += f"\nwidth = {title_width:.3f}m"
         title += f"\ncurv = {title_curv:.3f}" + r"$m^{-1}$"
         title += f"\n{title_additional_notes}"
@@ -791,7 +790,6 @@ def plot_3D_beam_profile_3D_plotting(
 
     for idx1 in range(numberOfDataPoints):
         for idx2 in range(ellipse_resolution + 1):
-
             w1 = pvec1[idx1] * cos_theta_array[idx2]
             w2 = pvec2[idx1] * sin_theta_array[idx2]
 
@@ -1000,7 +998,6 @@ def plot_3D_beam_profile_3D_plotting(
     ellipse_init_pos_y = np.zeros(ellipse_resolution + 1)
 
     for idx in range(ellipse_resolution + 1):
-
         ellipse_init_pos_x[idx] = (
             cos_theta_array[idx] * pvec1_2d[0] + sin_theta_array[idx] * pvec2_2d[0]
         )
@@ -1165,7 +1162,6 @@ def plot_3D_beam_profile_3D_plotting(
         ellipse_2d_y = np.zeros(ellipse_resolution + 1)
 
         for i in range(ellipse_resolution + 1):
-
             ellipse_2d_x[i] = (
                 cos_theta_array[i] * pvec1_2d_pos(idx)[0]
                 + sin_theta_array[i] * pvec2_2d_pos(idx)[0]

@@ -1,0 +1,326 @@
+# import datatree # TO REMOVE -- find a replacement for this? if not, uncoment the -> for def beam_me_up
+import logging
+import numpy as np
+import pathlib
+from scotty.checks_v4 import VALID_GEOMETRIES, VALID_LAUNCH_FLAGS, VALID_LAUNCH_MODE_FLAGS, VALID_BOUNDARY_FLAGS, Parameters
+from scotty.geometry_v4 import MagneticField_Cylindrical, MagneticField_Cartesian, create_magnetic_geometry
+from scotty.hamiltonian_v4 import initialise_hamiltonians
+from scotty.launch_v4 import find_plasma_entry_position, find_auto_delta_signs
+from scotty.logger_v4 import config_logger, arr2str
+from scotty.profile_fit import ProfileFitLike, profile_fit
+from scotty.typing import FloatArray, PathLike
+from scotty._version import __version__
+from typing import Optional, Sequence, Union
+import uuid
+
+def beam_me_up(
+    
+    # Main parameters
+    geometry: VALID_GEOMETRIES,
+    poloidal_launch_angle_Torbeam: float,
+    toroidal_launch_angle_Torbeam: float,
+    launch_freq_GHz: float,
+    launch_beam_width: float,
+    launch_beam_curvature: float,
+    launch_position: FloatArray,
+    mode_flag: VALID_LAUNCH_MODE_FLAGS,
+
+    # Solver settings and finite-difference parameters
+    launch_flag: VALID_LAUNCH_FLAGS,
+    boundary_flag: VALID_BOUNDARY_FLAGS,
+    relativistic_flag: bool = False, # includes relativistic corrections to electron mass when set to True
+    auto_delta_sign: bool = True,  # For flipping signs to maintain forward difference
+    delta_X: float = 1e-4, # in the same units as data_X_coord
+    delta_Y: float = 1e-4, # in the same units as data_Y_coord
+    delta_R: float = 1e-4,
+    delta_Z: float = 1e-4, # in the same units as data_Z_coord
+    delta_K_X: float = 1e-1,  # in the same units as K_X
+    delta_K_Y: float = 1e-1,  # in the same units as K_Y
+    delta_K_R: float = 1e-1,
+    delta_K_zeta: float = 1e-1,
+    delta_K_Z: float = 1e-1,  # in the same units as K_Z
+    len_tau: int = 102,
+    rtol: float = 1e-3, # for solve_ivp of the ray/beam solvers
+    atol: float = 1e-6, # for solve_ivp of the ray/beam solvers
+    poloidal_flux_enter: float = 1.0,
+    poloidal_flux_zero_density: float = 1.0, # When polflux >= poloidal_flux_zero_density, Scotty sets density = 0
+    poloidal_flux_zero_temperature: float = 1.0, # Temperature analogue of poloidal_flux_zero_density
+
+    # Data input and output arguments
+    magnetic_data_path = pathlib.Path("."),
+    ne_data_path = pathlib.Path("."),
+    Te_data_path = pathlib.Path("."),
+    input_filename_suffix: str = "",
+    output_path = pathlib.Path("."),
+    output_filename_suffix: str = "",
+    shot: Optional[int] = None,
+    equil_time: Optional[Union[float, int]] = None,
+
+    # Interpolation settings
+    find_B_method: Union[str, MagneticField_Cylindrical, MagneticField_Cartesian] = "omfit",
+    density_fit_method: Optional[Union[str, ProfileFitLike]] = None,
+    density_fit_parameters: Optional[Sequence] = None,
+    temperature_fit_method: Optional[Union[str, ProfileFitLike]] = None,
+    temperature_fit_parameters: Optional[Sequence] = None,
+    interp_order: Union[str, int] = 5, # For the 3D interpolation functions
+    interp_smoothing: int = 5, # For the 3D interpolation functions (specifically, make_fit)
+
+    # Logging flags
+    console_log_level: Union[str, int] = "INFO", # For returning log messages on console
+    file_log_level: Optional[Union[str, int]] = None, # For returning log messages on a log file
+    # TO REMOVE -- need to put one more argument for log name
+
+    # Plotting flags
+    figure_flag: bool = True,
+    further_analysis_flag: bool = False,
+    detailed_analysis_flag: bool = False,
+    # TO REMOVE -- need to put individual flags for each plot
+
+    # Additional flags
+    quick_run: bool = False,       # For quick runs (only ray tracing)
+    return_dt_field: bool = False, # For returning the datatree, field class, and Hamiltonians
+
+    # Keeping the extra kwargs for parsing later
+    **kwargs,
+
+):# -> datatree.DataTree:
+    
+    # INSERT DOC STRING HERE
+
+    ##################################################
+    #
+    # INITIALISATION ROUTINE
+    #
+    ##################################################
+    params = Parameters(
+        # Main parameters
+        geometry = geometry,
+        poloidal_launch_angle_Torbeam = poloidal_launch_angle_Torbeam,
+        toroidal_launch_angle_Torbeam = toroidal_launch_angle_Torbeam,
+        launch_freq_GHz = launch_freq_GHz,
+        launch_beam_width = launch_beam_width,
+        launch_beam_curvature = launch_beam_curvature,
+        q_launch = launch_position,
+        mode_flag_launch = mode_flag,
+
+        # Solver settings and finite-difference parameters
+        launch_flag = launch_flag,
+        boundary_flag = boundary_flag,
+        relativistic_flag = relativistic_flag,
+        auto_delta_sign = auto_delta_sign,
+        deltas_cylindrical = np.array([delta_R, delta_Z, delta_K_R, delta_K_zeta, delta_K_Z], dtype=float),
+        deltas_cartesian = np.array([delta_X, delta_Y, delta_Z, delta_K_X, delta_K_Y, delta_K_Z], dtype=float),
+        len_tau = len_tau,
+        rtol = rtol,
+        atol = atol,
+        poloidal_flux_enter = poloidal_flux_enter,
+        poloidal_flux_zero_density = poloidal_flux_zero_density,
+        poloidal_flux_zero_temperature = poloidal_flux_zero_temperature,
+
+        # Data input and output arguments
+        magnetic_data_path = magnetic_data_path,
+        ne_data_path = ne_data_path,
+        Te_data_path = Te_data_path,
+        input_filename_suffix = input_filename_suffix,
+        output_path = output_path,
+        output_filename_suffix = output_filename_suffix,
+        shot = shot,
+        equil_time = equil_time,
+
+        # Interpolation settings
+        find_B_method = find_B_method,
+        density_fit_method = density_fit_method,
+        density_fit_parameters = density_fit_parameters,
+        temperature_fit_method = temperature_fit_method,
+        temperature_fit_parameters = temperature_fit_parameters,
+        interp_order = interp_order,
+        interp_smoothing = interp_smoothing,
+
+        # Plotting flags
+        figure_flag = figure_flag,
+        further_analysis_flag = further_analysis_flag,
+        detailed_analysis_flag = detailed_analysis_flag,
+
+        # Additional flags
+        quick_run = quick_run,
+        return_dt_field = return_dt_field,
+
+        # Extra kwargs for parsing
+        **kwargs,
+    )
+
+    # Setting up the logger
+    config_logger(console_log_level, file_log_level, params.output_path, params.output_filename_suffix)
+    log = logging.getLogger(__name__)
+    log.debug(f"Saved and validated launch parameters")
+    log.debug(f"Initialised logger")
+
+    log.info(f"""\n
+    ##################################################
+    #
+    # STARTING ROUTINE
+    #
+    ##################################################
+    #
+    # Beam trace me up, Scotty!
+    # scotty version {__version__}
+    # Run ID: {uuid.uuid4()}
+    #
+    ##################################################
+    #
+    # Starting run for:
+    #   - Geometry = {params.geometry}
+    #   - Pol. launch angle = {params.poloidal_launch_angle_deg_Torbeam} deg
+    #   - Tor. launch angle = {params.toroidal_launch_angle_deg_Torbeam} deg
+    #   - Launch frequency = {params.launch_frequency_GHz} GHz
+    #   - Launch beam width = {params.launch_beam_width} m
+    #   - Launch beam curvature = {params.launch_beam_curvature} m^-1
+    #   - Launch position {"[R,zeta,Z]" if params.geometry == "cylindrical" else "[X,Y,Z]"} = {arr2str(params.q_launch)}
+    #   - Mode flag = {params.mode_flag_launch}
+    #
+    #   - find_B_method = {params.find_B_method}
+    #   - launch_flag = {params.launch_flag}
+    #   - boundary flag = {params.boundary_flag}
+    #   - relativistic flag = {params.relativistic_flag}
+    #   - figure flag = {params.figure_flag}
+    #   - further_analysis flag = {params.further_analysis_flag}
+    #   - detailed_analysis flag = {params.detailed_analysis_flag}
+    #
+    ##################################################
+    """)
+
+    log.debug(f"Setting experimental profiles for density")
+    params.set_experimental_profiles()
+
+    # UUsing the electron density data, create a spline fit as a
+    # function of poloidal flux, i.e.:
+    # density_fit(poloidal_flux) = electron_density
+    density_fit = make_fit(
+        method = params.density_fit_method,
+        poloidal_flux_zero_density = params.poloidal_flux_zero_density,
+        parameters = params.density_fit_parameters,
+        filename = params.ne_filename)
+    
+    # TO REMOVE # TODO THIS SOON
+    # Using the temperature data, create a spline fit as a
+    # function of poloidal flux, i.e.:
+    # temperature_fit(poloidal_flux) = temperature
+    log.debug(f"Making temperature fit profile")
+    log.warning(f"Skipping temperature fit profile -- code not done yet -- setting `temperature_fit` = `None`")
+    temperature_fit = None
+
+    # If the user has already pre-loaded a field, use it
+    # Otherwise, create a new one from the specified data pathway
+    field = create_magnetic_geometry(
+        geometry = params.geometry,
+        find_B_method = find_B_method, # not from params because we only store the string/name, but find_B_method is probably already a MagField class
+        interp_order_str = params.interp_order_magnetic_data_str,
+        interp_order_int = params.interp_order_magnetic_data_int,
+        interp_smoothing = params.interp_smoothing,
+        magnetic_data_path = params.magnetic_data_path,
+        input_filename_suffix = params.input_filename_suffix,
+        shot = params.shot,
+        equil_time = params.equil_time,
+        **kwargs.get("create_magnetic_geometry", {}))
+    
+    log.info(f"""\n
+    ##################################################
+    #
+    # LAUNCH ROUTINE
+    #
+    ##################################################
+    """)
+
+    # Calculating the plasma entry position and auto_delta_sign
+    params.q_initial = find_plasma_entry_position(
+        poloidal_launch_angle_deg_Torbeam = params.poloidal_launch_angle_deg_Torbeam,
+        toroidal_launch_angle_deg_Torbeam = params.toroidal_launch_angle_deg_Torbeam,
+        q_launch = params.q_launch,
+        launch_flag = params.launch_flag,
+        field = field,
+        poloidal_flux_enter = params.poloidal_flux_enter,
+        boundary_adjust = 1e-6)
+    
+    # Setting the delta signs
+    spatial_deltas = find_auto_delta_signs(
+        auto_delta_sign = params.auto_delta_sign,
+        q_initial = params.q_initial,
+        deltas = params.deltas[:-3],
+        field = field)
+    
+    if   params.geometry == "cylindrical": (params.delta_R, params.delta_Z) = spatial_deltas
+    elif params.geometry == "cartesian":   (params.delta_X, params.delta_Y, params.delta_Z) = spatial_deltas
+    
+    # Initialises the Hamiltonian H for `mode_flag`s +1 and -1
+    hamiltonian_pos1, hamiltonian_neg1 = initialise_hamiltonians(
+        launch_angular_freq = params.launch_angular_frequency,
+        deltas = params.deltas,
+        field = field,
+        density_fit = density_fit,
+        temperature_fit = temperature_fit,
+    )
+
+    # Calculating the plasma entry parameters
+    # find_plasma_entry_parameters()
+
+    # Assigning the correct Hamiltonian
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+def make_fit(
+    method: Optional[Union[str, ProfileFitLike]],
+    poloidal_flux_zero_density: float,
+    parameters: Optional[Sequence],
+    filename: Optional[PathLike]
+) -> ProfileFitLike:
+    
+    log = logging.getLogger(__name__)
+    log.debug(f"Making density fit profile")
+    
+    if callable(method): return method
+    
+    if not isinstance(method, (str, type(None))): raise TypeError(f"Unexpected method type. Expected callable, str, or None, but got '{type(method)}'")
+    
+    if parameters is None: raise ValueError(f"Passing `density_fit_method` ({method}) as string or None requires a list or array of parameters")
+    
+    return profile_fit(method, poloidal_flux_zero_density, parameters, filename)
