@@ -2,15 +2,17 @@
 import logging
 import numpy as np
 import pathlib
-from scotty.checks_v4 import VALID_GEOMETRIES, VALID_LAUNCH_FLAGS, VALID_LAUNCH_MODE_FLAGS, VALID_BOUNDARY_FLAGS, Parameters
+from scotty.beam_solver_v4 import evolve_beam
+from scotty.checks_v4 import VALID_GEOMETRIES, VALID_LAUNCH_FLAGS, VALID_LAUNCH_MODE_FLAGS, VALID_BOUNDARY_FLAGS, Parameters, check_input_before_ray_tracing
 from scotty.geometry_v4 import MagneticField_Cylindrical, MagneticField_Cartesian, create_magnetic_geometry
-from scotty.hamiltonian_v4 import initialise_hamiltonians
-from scotty.launch_v4 import find_plasma_entry_position, find_auto_delta_signs
+from scotty.hamiltonian_v4 import initialise_hamiltonians, assign_hamiltonians
+from scotty.launch_v4 import find_plasma_entry_position, find_auto_delta_signs, find_plasma_entry_parameters
 from scotty.logger_v4 import config_logger, arr2str
 from scotty.profile_fit import ProfileFitLike, profile_fit
+from scotty.ray_solver_v4 import propagate_ray
 from scotty.typing import FloatArray, PathLike
 from scotty._version import __version__
-from typing import Optional, Sequence, Union
+from typing import Optional, Sequence, Union, cast
 import uuid
 
 def beam_me_up(
@@ -77,7 +79,7 @@ def beam_me_up(
     # TO REMOVE -- need to put individual flags for each plot
 
     # Additional flags
-    quick_run: bool = False,       # For quick runs (only ray tracing)
+    ray_tracing: bool = False,     # For quick runs (only ray tracing)
     return_dt_field: bool = False, # For returning the datatree, field class, and Hamiltonians
 
     # Keeping the extra kwargs for parsing later
@@ -142,7 +144,7 @@ def beam_me_up(
         detailed_analysis_flag = detailed_analysis_flag,
 
         # Additional flags
-        quick_run = quick_run,
+        ray_tracing = ray_tracing,
         return_dt_field = return_dt_field,
 
         # Extra kwargs for parsing
@@ -252,51 +254,107 @@ def beam_me_up(
     elif params.geometry == "cartesian":   (params.delta_X, params.delta_Y, params.delta_Z) = spatial_deltas
     
     # Initialises the Hamiltonian H for `mode_flag`s +1 and -1
-    hamiltonian_pos1, hamiltonian_neg1 = initialise_hamiltonians(
+    (   hamiltonian_pos1,
+        hamiltonian_neg1,
+    ) = initialise_hamiltonians(
         launch_angular_freq = params.launch_angular_frequency,
         deltas = params.deltas,
         field = field,
         density_fit = density_fit,
-        temperature_fit = temperature_fit,
-    )
+        temperature_fit = temperature_fit)
 
     # Calculating the plasma entry parameters
-    # find_plasma_entry_parameters()
-
+    (   params.K_launch,
+        params.K_initial,
+        params.Psi_3D_launch_labframe,
+        params.Psi_3D_entry_labframe, 
+        params.Psi_3D_initial_labframe,
+        params.distance_from_launch_to_entry,
+        params.e_hat_initial,
+        params.mode_flag_initial,
+        params.mode_index,
+    ) = find_plasma_entry_parameters(
+        launch_flag = params.launch_flag,
+        boundary_flag = params.boundary_flag,
+        mode_flag_launch = params.mode_flag_launch,
+        poloidal_launch_angle_deg_Torbeam = params.poloidal_launch_angle_deg_Torbeam,
+        toroidal_launch_angle_deg_Torbeam = params.toroidal_launch_angle_deg_Torbeam,
+        q_launch = params.q_launch,
+        q_initial = params.q_initial,
+        launch_beam_width = params.launch_beam_width,
+        launch_beam_curvature = params.launch_beam_curvature,
+        field = field,
+        K_plasmaLaunch_cartesian = params.K_plasmaLaunch_cartesian,
+        Psi_3D_plasmaLaunch_labframe_cartesian = params.Psi_3D_plasmaLaunch_labframe_cartesian,
+        hamiltonian_pos1 = hamiltonian_pos1,
+        hamiltonian_neg1 = hamiltonian_neg1,
+        tol_H = 1e-5,
+        tol_O_mode_polarisation = 0.25)
+    
     # Assigning the correct Hamiltonian
+    (   hamiltonian,
+        hamiltonian_other,
+    ) = assign_hamiltonians(
+        mode_flag_initial = params.mode_flag_initial,
+        hamiltonian_pos1 = hamiltonian_pos1,
+        hamiltonian_neg1 = hamiltonian_neg1,
+        q_initial = params.q_initial,
+        K_initial = params.K_initial,
+        tol_H = 1e-5)
 
+    # Checking validity of user-specified arguments
+    # one last time before ray tracing
+    check_input_before_ray_tracing(params)
+    
+    log.info(f"""\n
+    ##################################################
+    #
+    # RAY TRACING ROUTINE
+    #
+    ##################################################
+    """)
 
+    ray_tracing_result = propagate_ray(
+        q_initial = params.q_initial,
+        K_initial = params.K_initial,
+        poloidal_flux_enter = params.poloidal_flux_enter,
+        hamiltonian = hamiltonian,
+        ray_tracing = params.ray_tracing,
+        rtol = params.rtol,
+        atol = params.atol,
+        len_tau = params.len_tau,
+        # tau_max = 1e5,
+    )
 
+    if params.ray_tracing: return ray_tracing_result # 2-tuple of (tau_arr, q_K_arrs)
+    else: tau_points, tau_terminating_event = ray_tracing_result
 
+    log.info(f"""\n
+    ##################################################
+    #
+    # BEAM TRACING ROUTINE
+    #
+    ##################################################
+    """)
 
+    # (   solver_status,
+    #     tau_array,
+    #     q_output,
+    #     K_output,
+    #     Psi_3D_output_labframe,
+    # ) =
+    return evolve_beam(
+        tau_leave = cast(float, tau_terminating_event),
+        tau_points = tau_points,
+        q_initial = params.q_initial,
+        K_initial = params.K_initial,
+        Psi_3D_initial_labframe = params.Psi_3D_initial_labframe,
+        hamiltonian = hamiltonian,
+        rtol = params.rtol,
+        atol = params.atol
+    )
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    # Extra stuff, for saving data etc
 
 
 

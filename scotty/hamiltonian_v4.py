@@ -1,8 +1,8 @@
 import logging
 import numpy as np
-from scotty.checks_v4 import VALID_FIELDS
+from scotty.checks_v4 import VALID_FIELDS, VALID_LAUNCH_MODE_FLAGS
 from scotty.derivatives import derivative
-from scotty.fun_general_v4 import find_normalised_plasma_freq, find_normalised_gyro_freq, angular_frequency_to_wavenumber, dot
+from scotty.fun_general_v4 import find_normalised_plasma_freq, find_normalised_gyro_freq, angular_frequency_to_wavenumber, dot, find_Booker_terms
 from scotty.geometry_v4 import MagneticField_Cylindrical, MagneticField_Cartesian
 from scotty.profile_fit import ProfileFitLike
 from scotty.typing import ArrayLike, FloatArray
@@ -41,7 +41,11 @@ class DielectricTensor:
     @property
     def e_12(self) -> ArrayLike: return self._epsilon_12
 
-
+##################################################
+#
+# HAMILTONIAN CODES
+#
+##################################################
 
 class Hamiltonian:
     r"""Functor to evaluate derivatives of the Hamiltonian, H, at a given set
@@ -90,14 +94,14 @@ class Hamiltonian:
         if isinstance(field, MagneticField_Cylindrical):
             delta_R, delta_Z, delta_K_R, delta_K_zeta, delta_K_Z = deltas
             self.spacings = {"R": delta_R, "Z": delta_Z, "K_R": delta_K_R, "K_zeta": delta_K_zeta, "K_Z": delta_K_Z}
-            def _B_vec(R,_,Z): return np.array([field.B_R(R,_,Z), field.B_T(R,_,Z), field.B_Z(R,_,Z)]) # type: ignore
-            def _K_vec(K_R, K_zeta, K_Z, q_R): return np.array([K_R, K_zeta/q_R, K_Z]) # type: ignore
+            def _K_vec(K_R: ArrayLike, K_zeta: ArrayLike, K_Z: ArrayLike, q_R: ArrayLike) -> ArrayLike: return np.array([K_R, K_zeta/q_R, K_Z]) # type: ignore
 
         elif isinstance(field, MagneticField_Cartesian):
             delta_X, delta_Y, delta_Z, delta_K_X, delta_K_Y, delta_K_Z = deltas
             self.spacings = {"X": delta_X, "Y": delta_Y, "Z": delta_Z, "K_X": delta_K_X, "K_Y": delta_K_Y, "K_Z": delta_K_Z}
-            def _B_vec(X,Y,Z): return np.array([field.B_X(X,Y,Z), field.B_Y(X,Y,Z), field.B_Z(X,Y,Z)]) # type: ignore
-            def _K_vec(K_X, K_Y, K_Z, _): return np.array([K_X, K_Y, K_Z]) # type: ignore
+            def _K_vec(K_X: ArrayLike, K_Y: ArrayLike, K_Z: ArrayLike, q_R: ArrayLike) -> ArrayLike: return np.array([K_X, K_Y, K_Z]) # type: ignore
+        
+        self._K_vec = _K_vec
         
         log.debug(f"""
         ##################################################
@@ -114,38 +118,34 @@ class Hamiltonian:
         ##################################################
         """)
 
-        # Abstracting and then creating the following methods
-        def mag(*args: ArrayLike, func: Callable) -> FloatArray: return np.linalg.norm(func(*args), axis=0)
-        def hat(*args: ArrayLike, func: Callable) -> FloatArray: return func(*args) / np.linalg.norm(func(*args), axis=0)
-        
-        self._B_vec = _B_vec
-        self._B_mag = lambda *args: mag(*args, func=self._B_vec)
-        self._B_hat = lambda *args: hat(*args, func=self._B_vec)
-
-        self._K_vec = _K_vec
-        self._K_mag = lambda *args: mag(*args, func=self._K_vec)
-        self._K_hat = lambda *args: hat(*args, func=self._K_vec)
-
     def __call__(self, q: FloatArray, K: FloatArray) -> FloatArray:
         polflux = self.field.polflux(*q)
         electron_density = self.density(polflux)
         temperature = self.temperature(polflux) if self.temperature else None
 
-        B_magnitude = self._B_mag(*q)
-        b_hat = self._B_hat(*q)
-        K_magnitude = self._K_mag(*K, q[0])
-        K_hat = self._K_hat(*q, K[1])
+        B_magnitude = self.field.magnitude(*q)
+        b_hat = self.field.unitvector(*q).T # to untranspose
+        K_vec = self._K_vec(*K, q_R=q[0])
+        K_magnitude = np.linalg.norm(K_vec, axis=0, keepdims=True)
+        K_hat = K_vec / K_magnitude
 
         if np.size(q[0]) == 1: sin_theta_m = np.dot(b_hat, K_hat)
         else:                  sin_theta_m = dot(b_hat.T, K_hat.T)
         sin_theta_m_sq = cast(ArrayLike, sin_theta_m**2)
 
-        epsilon = DielectricTensor(self.angular_frequency, B_magnitude, electron_density, temperature)
-        e_bb, e_11, e_12 = epsilon.e_bb, epsilon.e_11, epsilon.e_12
-
-        Booker_alpha = (e_bb * sin_theta_m_sq) + e_11 * (1 - sin_theta_m_sq)
-        Booker_beta  = (-e_11 * e_bb * (1 + sin_theta_m_sq)) - (e_11**2 - e_12**2) * (1 - sin_theta_m_sq)
-        Booker_gamma = e_bb * (e_11**2 - e_12**2)
+        Booker_alpha, Booker_beta, Booker_gamma = find_Booker_terms(
+            launch_angular_freq = self.angular_frequency,
+            B_total = B_magnitude,
+            sin_theta_m_sq = sin_theta_m_sq,
+            electron_density = electron_density,
+            temperature = temperature,
+        )
+        # TO REMOVE -- old code, putting for reference
+        # epsilon = DielectricTensor(self.angular_frequency, B_magnitude, electron_density, temperature)
+        # e_bb, e_11, e_12 = epsilon.e_bb, epsilon.e_11, epsilon.e_12
+        # Booker_alpha = (e_bb * sin_theta_m_sq) + e_11 * (1 - sin_theta_m_sq)
+        # Booker_beta  = (-e_11 * e_bb * (1 + sin_theta_m_sq)) - (e_11**2 - e_12**2) * (1 - sin_theta_m_sq)
+        # Booker_gamma = e_bb * (e_11**2 - e_12**2)
 
         H_discriminant = np.maximum(np.zeros_like(Booker_beta), Booker_beta**2 - 4 * Booker_alpha * Booker_gamma)
 
@@ -168,10 +168,6 @@ class Hamiltonian:
             #   - |theta_m| (in rad) = {np.arcsin(np.sqrt(sin_theta_m_sq))}
             #   - |theta_m| (in deg) = {np.rad2deg(np.arcsin(np.sqrt(sin_theta_m_sq)))}
             #
-            #   - e_11 = {epsilon.e_11}
-            #   - e_12 = {epsilon.e_12}
-            #   - e_bb = {epsilon.e_bb}
-            #
             #   - Booker_a (a) = {Booker_alpha}
             #   - Booker_b (b) = {Booker_beta}
             #   - Booker_g (g) = {Booker_gamma}
@@ -183,7 +179,6 @@ class Hamiltonian:
 
         return H_Booker
     
-    from numpy.typing import NDArray
     def derivatives(self, q: FloatArray, K: FloatArray, second_order: bool = False) -> Dict[str, FloatArray]:
         """Evaluate the first-order derivative in all directions at the given
         point(s), and optionally the second-order ones too
@@ -197,10 +192,9 @@ class Hamiltonian:
             K_R, K_zeta, K_Z = K
             starts = {"R": R, "Z": Z, "K_R": K_R, "K_zeta": K_zeta, "K_Z": K_Z}
 
-            dH_dR = apply_stencil(("R",), "d1_FFD2")
             derivatives = {
-                "dH_dR":     dH_dR,
-                "dH_dzeta":  np.zeros_like(dH_dR),
+                "dH_dR":     apply_stencil(("R",), "d1_FFD2"),
+                "dH_dzeta":  np.zeros(len(R)),
                 "dH_dZ":     apply_stencil(("Z",), "d1_FFD2"),
                 "dH_dKR":    apply_stencil(("K_R",), "d1_CFD2"),
                 "dH_dKzeta": apply_stencil(("K_zeta",), "d1_CFD2"),
@@ -301,8 +295,7 @@ def initialise_hamiltonians(
         deltas = deltas,
         field = field,
         density_fit = density_fit,
-        temperature_fit = temperature_fit,
-    )
+        temperature_fit = temperature_fit)
 
     H_neg1 = Hamiltonian(
         launch_angular_freq = launch_angular_freq,
@@ -310,46 +303,40 @@ def initialise_hamiltonians(
         deltas = deltas,
         field = field,
         density_fit = density_fit,
-        temperature_fit = temperature_fit,
-    )
+        temperature_fit = temperature_fit)
     
     return H_pos1, H_neg1
 
 
 
-# def assign_hamiltonians(
-#     mode_flag_launch: VALID_LAUNCH_MODE_FLAGS,
-#     mode_flag_initial: Literal[1, -1],
-#     hamiltonian_pos1: Hamiltonian,
-#     hamiltonian_neg1: Hamiltonian,
-#     q_initial: FloatArray,
-#     K_initial: FloatArray,
-#     tol_H: float = 1e-5,
-# ) -> Tuple[Hamiltonian, Hamiltonian, Literal[1, -1]]:
+def assign_hamiltonians(
+    mode_flag_initial: Literal[1, -1],
+    hamiltonian_pos1: Hamiltonian,
+    hamiltonian_neg1: Hamiltonian,
+    q_initial: FloatArray,
+    K_initial: FloatArray,
+    tol_H: float = 1e-5,
+) -> Tuple[Hamiltonian, Hamiltonian]:
     
+    log.debug(f"Assigning the correct Hamiltonian corresponding to `mode_flag_initial` = {mode_flag_initial}")
 
-    
-#     return
+    if mode_flag_initial ==  1:
+        H, H_other = hamiltonian_pos1, hamiltonian_neg1
+    else: # mode_flag_initial == -1:
+        H, H_other = hamiltonian_neg1, hamiltonian_pos1
 
+    # Checking to make sure H = 0 (i.e. it is indeed the correct solution)
+    H_val = H(q_initial, K_initial)
+    H_other_val = H_other(q_initial, K_initial)
+    if H_val > tol_H and H_val > H_other_val:
+        log.warning(f"`mode_flag` and `Hamiltonian` may not be selected correctly: H = {H_val} > H_tol = {tol_H} for `mode_flag_initial` = {mode_flag_initial}")
+        log.warning(f"This may or may not cause issues")
 
-
-
-
-
-
-
-
-
-
-
-
-
+    return H, H_other
 
 
 
-
-
-def hessians(field: VALID_FIELDS, dH: dict) -> Tuple[FloatArray, FloatArray, FloatArray]:
+def hessians(dH: dict, cartesian: bool) -> Tuple[FloatArray, FloatArray, FloatArray]:
     r"""
     Given a dictionary containing the second derivatives of the Hamiltonian (from
     hamiltonian.derivatives with second_order = True), compute the elements of the
@@ -367,7 +354,7 @@ def hessians(field: VALID_FIELDS, dH: dict) -> Tuple[FloatArray, FloatArray, Flo
         """Such that shape is [points,3,3] instead of [3,3,points]"""
         return array if array.ndim == 2 else np.moveaxis(np.squeeze(array), 2, 0)
 
-    if isinstance(field, MagneticField_Cylindrical):
+    if not cartesian: # isinstance(field, MagneticField_Cylindrical):
         d2H_dR2        = dH["d2H_dR2"]
         d2H_dZ2        = dH["d2H_dZ2"]
         d2H_dKR2       = dH["d2H_dKR2"]

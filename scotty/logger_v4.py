@@ -4,7 +4,7 @@ import matplotlib
 import numpy as np
 import pathlib
 import time
-from typing import Any, Callable, Optional, Tuple, Union
+from typing import Any, Callable, Optional, Tuple, Union, ParamSpec, TypeVar
 
 _valid_log_level_dict = {"debug": 10, "info": 20, "warning": 30, "error": 40, "critical": 50}
 
@@ -107,15 +107,16 @@ def ralt(log: logging.Logger, msg: str, f: Callable[..., Any], *args, **kwargs):
 
 
 
+P = ParamSpec("P")
+R = TypeVar("R")
 # TO REMOVE -- use a decorator instead?
-def timer(func: Callable):
+def timer(func: Callable[P, R]) -> Callable[P, Tuple[R, float]]:
     @wraps(func)
-    def wrapper(*args, **kwargs) -> Tuple[Any, ...]:
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> Tuple[Any, float]:
         start = time.perf_counter()
         result = func(*args, **kwargs)
         duration = time.perf_counter() - start
-        if isinstance(result, tuple): return (*result, duration)
-        else:                         return (result, duration)
+        return result, duration
     return wrapper
 
 

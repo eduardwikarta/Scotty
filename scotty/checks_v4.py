@@ -4,7 +4,7 @@ from pathlib import Path
 from scotty.fun_general_v4 import freq_GHz_to_angular_frequency, angular_frequency_to_wavenumber
 from scotty.geometry_v4 import MagneticField_Cylindrical, MagneticField_Cartesian
 from scotty.profile_fit import ProfileFitLike
-from scotty.typing import FloatArray
+from scotty.typing import FloatArray, ComplexFloatArray
 from typing import Literal, Optional, Sequence, Union, Tuple, overload
 import numpy as np
 import os
@@ -17,7 +17,7 @@ import os
 
 VALID_GEOMETRIES = Literal["cylindrical", "cartesian"]
 VALID_LAUNCH_MODE_FLAGS = Literal[1, -1, "O", "X"]
-VALID_LAUNCH_FLAGS = Optional[Literal["plasma", "vacuum"]]
+VALID_LAUNCH_FLAGS = Literal["plasma", "vacuum"]
 VALID_BOUNDARY_FLAGS = Optional[Literal["continuous", "discontinuous"]]
 VALID_FIELDS = Union[MagneticField_Cylindrical, MagneticField_Cartesian]
 
@@ -32,9 +32,21 @@ log = logging.getLogger(__name__)
 class Parameters:
     # Initialisating here to stop type checker from complaining
     geometry: VALID_GEOMETRIES
-    q_initial: FloatArray
+    mode_flag_launch: VALID_LAUNCH_MODE_FLAGS
     mode_flag_initial: Literal[1,-1]
     launch_flag: VALID_LAUNCH_FLAGS
+    boundary_flag: VALID_BOUNDARY_FLAGS
+
+    q_initial: FloatArray
+    K_launch: Optional[FloatArray]
+    K_initial: FloatArray
+    Psi_3D_launch_labframe: Optional[ComplexFloatArray]
+    Psi_3D_entry_labframe: Optional[ComplexFloatArray]
+    Psi_3D_initial_labframe: ComplexFloatArray
+    distance_from_launch_to_entry: Optional[float]
+    e_hat_initial: ComplexFloatArray
+    mode_flag_initial: Literal[1, -1]
+    mode_index: int
     
     def __init__(self,
         
@@ -87,7 +99,7 @@ class Parameters:
         detailed_analysis_flag: bool,
 
         # Additional flags
-        quick_run: bool,
+        ray_tracing: bool,
         return_dt_field: bool,
 
         # Extra kwargs for parsing
@@ -130,11 +142,12 @@ class Parameters:
         #
         ##################################################
 
+        self.ray_tracing = ray_tracing
         self.launch_flag = launch_flag
         self.boundary_flag = boundary_flag
         self.relativistic_flag = relativistic_flag
         self.auto_delta_sign = auto_delta_sign
-        self.len_tau = self._check_positive("len_tau", len_tau)
+        self.len_tau = int(self._check_positive("len_tau", len_tau))
         self.rtol = rtol
         self.atol = atol
         self.poloidal_flux_enter = self._check_positive("poloidal_flux_enter", poloidal_flux_enter)
@@ -337,3 +350,15 @@ class Parameters:
             # ne_data_density_array = ne_data[2::2]
             # ne_data_radialcoord_array = ne_data[1::2]
         else: self.ne_filename = None
+
+
+
+##################################################
+#
+# INPUT CHECK BEFORE RAY TRACING
+#
+##################################################
+
+def check_input_before_ray_tracing(params: Parameters):
+    log.info(f"Checking the validity of inputs before ray tracing")
+    log.info(f"No checks implemented yet")
