@@ -210,14 +210,14 @@ def find_vector_and_q_cyl_to_cart(vector_labframe_cyl: FloatArray, q_labframe_cy
     cos_zeta = np.cos(q_zeta)
 
     q_labframe_cart = np.zeros_like(q_labframe_cyl, dtype=q_labframe_cyl.dtype)
-    q_labframe_cart[0, :] = q_R*cos_zeta
-    q_labframe_cart[1, :] = q_R*sin_zeta
-    q_labframe_cart[2, :] = q_Z
+    q_labframe_cart[0] = q_R*cos_zeta
+    q_labframe_cart[1] = q_R*sin_zeta
+    q_labframe_cart[2] = q_Z
 
     v_labframe_cart = np.zeros_like(vector_labframe_cyl, dtype=vector_labframe_cyl.dtype)
-    v_labframe_cart[0, :] = v_R*cos_zeta - v_zeta*sin_zeta
-    v_labframe_cart[1, :] = v_R*sin_zeta + v_zeta*cos_zeta
-    v_labframe_cart[2, :] = v_Z
+    v_labframe_cart[0] = v_R*cos_zeta - v_zeta*sin_zeta
+    v_labframe_cart[1] = v_R*sin_zeta + v_zeta*cos_zeta
+    v_labframe_cart[2] = v_Z
 
     return v_labframe_cart, q_labframe_cart
 
@@ -231,7 +231,10 @@ def ray_line(
     q_X_launch: float, q_Y_launch: float, q_Z_launch: float,
     tau: Union[float, int, FloatArray],
     poloidal_launch_angle_deg_Torbeam: float,
-    toroidal_launch_angle_deg_Torbeam: float):
+    toroidal_launch_angle_deg_Torbeam: float,
+) -> FloatArray:
+    
+    """Returns `q_X`, `q_Y`, `q_Z`"""
 
     XYZ_start = np.array([q_X_launch, q_Y_launch, q_Z_launch])
 
@@ -245,7 +248,7 @@ def ray_line(
 
     ray_line_positions = XYZ_start + np.outer(tau, XYZ_step)
 
-    return np.squeeze(ray_line_positions)
+    return np.squeeze(ray_line_positions).T
 
 def poloidal_flux_along_ray_line(
     q_X_launch: float, q_Y_launch: float, q_Z_launch: float,
@@ -348,8 +351,7 @@ def find_inverse_2D(matrix_2D: Array) -> Array:
     return matrix_2D_inverse
 
 def find_K_magnitude(cartesian: bool, K0: ArrayLike, K1: ArrayLike, K2: ArrayLike, q0: ArrayLike):
-    if cartesian: return np.sqrt(K0**2 + K1**2 + K2**2)
-    else:         return np.sqrt(K0**2 + (K1/div)**2 + K2**2)
+    return np.sqrt(K0**2 + K1**2 + K2**2) if cartesian else np.sqrt(K0**2 + (K1/q0)**2 + K2**2)
 
 ##################################################
 #

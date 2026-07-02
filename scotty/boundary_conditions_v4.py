@@ -7,6 +7,7 @@ from scotty.fun_general_v4 import (
     find_normalised_plasma_freq,
     find_normalised_gyro_freq, 
     find_normalised_cutoff_and_hybrid_freqs,
+    find_q_labframe_cyl_to_cart,
     find_vector_and_q_cyl_to_cart,
     find_q_labframe_cart_to_cyl,
     find_K_labframe_cart_to_cyl,
@@ -97,6 +98,8 @@ def find_K_plasma(
     hamiltonian: Hamiltonian,
 ) -> FloatArray:
     
+    """NOTE: if K_vacuum is in cyl (cart), K_plasma is in cyl (cart)"""
+    
     if boundary_flag in ["continuous", None]: K_plasma = K_vacuum
     else: # elif boundary_flag == "discontinuous":
 
@@ -104,12 +107,12 @@ def find_K_plasma(
         # of the cartesian calculations (when Y=0). Hence, for example,
         # we have dp/dX = dp/dR and dp/dY = dp/dzeta
         if isinstance(field, MagneticField_Cylindrical):
-            delta_R, delta_Z = hamiltonian.spacings["R"], hamiltonian.spacings["Z"]
+            delta_R, delta_Z = hamiltonian.spacings["q0"], hamiltonian.spacings["q2"]
             dp_dX = field.d_polflux_dR(*q_entry, delta_R=delta_R)
-            dp_dY = np.array([0.0])
+            dp_dY = np.zeros_like(dp_dX)
             dp_dZ = field.d_polflux_dZ(*q_entry, delta_Z=delta_Z)
         else:
-            delta_X, delta_Y, delta_Z = hamiltonian.spacings["X"], hamiltonian.spacings["Y"], hamiltonian.spacings["Z"]
+            delta_X, delta_Y, delta_Z = hamiltonian.spacings["q0"], hamiltonian.spacings["q1"], hamiltonian.spacings["q2"]
             dp_dX = field.d_polflux_dX(*q_entry, delta_X=delta_X)
             dp_dY = field.d_polflux_dY(*q_entry, delta_Y=delta_Y)
             dp_dZ = field.d_polflux_dZ(*q_entry, delta_Z=delta_Z)
@@ -328,21 +331,21 @@ def find_Psi_3D_plasma(
         # of the cartesian calculations (when Y=0). Hence, for example,
         # we have dp/dX = dp/dR and dp/dY = dp/dzeta
         if isinstance(field, MagneticField_Cylindrical):
-            dH = hamiltonian.derivatives(*q_entry, *K_plasma)
+            dH = hamiltonian.derivatives(q_entry, K_plasma)
 
-            delta_R, delta_Z = hamiltonian.spacings["R"], hamiltonian.spacings["Z"]
+            delta_R, delta_Z = hamiltonian.spacings["q0"], hamiltonian.spacings["q2"]
             derivatives = {
                 # First derivatives of the Hamiltonian
                 "dH_dR": dH["dH_dR"],
-                "dH_dzeta": np.array([0.0]),
+                "dH_dzeta": np.zeros_like(dH["dH_dR"]),
                 "dH_dZ": dH["dH_dZ"],
                 "dH_dKR": dH["dH_dKR"],
                 "dH_dKzeta": dH["dH_dKzeta"],
                 "dH_dKZ": dH["dH_dKZ"],
 
                 # First derivatives of poloidal flux
-                "dp_dR": field.d_polflux_dR(*q_entry, delta_R=delta_R),
-                "dp_zeta": dH["dH_dzeta"],
+                "dp_dR": (tmp := field.d_polflux_dR(*q_entry, delta_R=delta_R)),
+                "dp_dzeta": np.zeros_like(tmp),
                 "dp_dZ": field.d_polflux_dZ(*q_entry, delta_Z=delta_Z),
 
                 # Second derivatives of poloidal flux
@@ -355,9 +358,9 @@ def find_Psi_3D_plasma(
             }
         
         else:
-            derivatives = hamiltonian.derivatives(*q_entry, *K_plasma)
+            derivatives = hamiltonian.derivatives(q_entry, K_plasma)
 
-            delta_X, delta_Y, delta_Z = hamiltonian.spacings["X"], hamiltonian.spacings["Y"], hamiltonian.spacings["Z"]
+            delta_X, delta_Y, delta_Z = hamiltonian.spacings["q0"], hamiltonian.spacings["q1"], hamiltonian.spacings["q2"]
             derivatives.update({
                 # First derivatives of poloidal flux
                 "dp_dX": field.d_polflux_dX(*q_entry, delta_X=delta_X),
@@ -476,10 +479,10 @@ def find_Psi_3D_plasma(
         #   - eta_XYZ = {eta_XYZ}
         #""")
 
-        solution_vector = np.array([
+        RHS_vector = np.array([
             (Psi_XX_v * dp_dY**2) + (Psi_YY_v * dp_dX**2) - (2 * Psi_XY_v * dp_dX * dp_dY) + 2*(K_X_v - K_X_p)*dp_dX*eta_XY + 2*(K_Y_v - K_Y_p)*dp_dY*eta_XY,
             (Psi_XX_v * dp_dZ**2) + (Psi_ZZ_v * dp_dX**2) - (2 * Psi_XZ_v * dp_dX * dp_dZ) + 2*(K_X_v - K_X_p)*dp_dX*eta_XZ + 2*(K_Z_v - K_Z_p)*dp_dZ*eta_XZ,
-        Psi_XX_v*dp_dZ**2 + Psi_YY_v*dp_dZ**2 + Psi_ZZ_v*(dp_dX + dp_dY)**2 + 2*Psi_XY_v*dp_dZ**2 - 2*Psi_XZ_v*dp_dZ*(dp_dX + dp_dY) - 2*Psi_YZ_v*dp_dZ*(dp_dX + dp_dY) + 2*(K_X_v - K_X_p)*dp_dX*eta_XYZ + 2*(K_Y_v - K_Y_p)*dp_dY*eta_XYZ + 2*(K_Z_v - K_Z_p)*dp_dZ*eta_XYZ,
+        Psi_XX_v*dp_dZ**2 + Psi_YY_v*dp_dZ**2 + Psi_ZZ_v*(dp_dX + dp_dY)**2 + 2*Psi_XY_v*dp_dZ**2 - 2*(Psi_XZ_v + Psi_YZ_v)*dp_dZ*(dp_dX + dp_dY) + 2*(K_X_v - K_X_p)*dp_dX*eta_XYZ + 2*(K_Y_v - K_Y_p)*dp_dY*eta_XYZ + 2*(K_Z_v - K_Z_p)*dp_dZ*eta_XYZ,
              -dH_dX,
              -dH_dY,
              -dH_dZ,
@@ -489,18 +492,18 @@ def find_Psi_3D_plasma(
         log.debug(f"""
         #
         #   - RHS vector =
-        #        {np.real(solution_vector[0])} + {np.imag(solution_vector[0])}j
-        #        {np.real(solution_vector[1])} + {np.imag(solution_vector[1])}j
-        #        {np.real(solution_vector[2])} + {np.imag(solution_vector[2])}j
-        #        {solution_vector[3]}
-        #        {solution_vector[4]}
-        #        {solution_vector[5]}
+        #        {np.real(RHS_vector[0])} + {np.imag(RHS_vector[0])}j
+        #        {np.real(RHS_vector[1])} + {np.imag(RHS_vector[1])}j
+        #        {np.real(RHS_vector[2])} + {np.imag(RHS_vector[2])}j
+        #        {RHS_vector[3]}
+        #        {RHS_vector[4]}
+        #        {RHS_vector[5]}
         #""")
         
         # The interface matrix is another way to say that we're solving
         # six linear equations relating the components of `Psi` in vacuum
         # and in plasma. What this looks like is thus:
-        #   interface_matrix * Psi_p_components = solution_vector
+        #   interface_matrix * Psi_p_components = RHS_vector
         #
         # There are (numerically) two ways to solve this:
         #   i)  invert `interface_matrix` and left-multiply throughout; or
@@ -523,7 +526,7 @@ def find_Psi_3D_plasma(
          Psi_XZ_p,
          Psi_YY_p,
          Psi_YZ_p,
-         Psi_ZZ_p] = np.linalg.solve(interface_matrix, solution_vector)
+         Psi_ZZ_p] = np.linalg.solve(interface_matrix, RHS_vector)
 
     # Reconstructing `Psi` matrix
     Psi_3D_plasma_labframe = np.array([
@@ -563,24 +566,20 @@ def apply_boundary_conditions(
     (None); (ii) continuous but not differentiable ("continuous"); or
     (iii) discontinuous and not differentiable ("discontinuous).
 
-    In the first case, no boundary conditions are applied, and the
+    For (i), no boundary conditions are applied, and the
     `q`, `K`, `Psi_3D` parameters are directly returned (and later fed
-    into the solver).
-
-    In the second case, the `continuous` boundary condition is applied
+    into the solver). For (ii), the `continuous` boundary condition is applied
     only for `Psi_3D_vacuum` and `Psi_3D_plasma`, while we have that
-    `K_vacuum` == `K_plasma`.
-
-    In the third case, the `discontinuous` boundary condition is applied
-    to find both `K_plasma` and `Psi_3D_plasma`.
+    `K_vacuum` == `K_plasma`. For (iii), `discontinuous` boundary condition is
+    applied to find both `K_plasma` and `Psi_3D_plasma`.
 
     Note that this function only accepts variables in cartesian
     coordinates because of the way the outer function
     (find_plasma_entry_parameters()) was constructed (i.e. the calculations
-    are only done in cartesian and then converted later if necessary). The
-    output is also only in cartesian coordinates, although this conversion
-    (if needed) to cartesian is only done right before the variables are
-    returned
+    are only done in cartesian and then converted later if necessary).
+    
+    Returns `K_plasma` and `Psi_3D_plasma` in cylindrical (cartesian) if
+    the field type is cylindrical (cartesian).
     """
 
     log.debug(f"Applying boundary conditions")
@@ -629,12 +628,4 @@ def apply_boundary_conditions(
         hamiltonian = hamiltonian,
     )
 
-    if cart:
-        K_plasma_entry_cartesian = K_plasma
-        Psi_3D_plasma_entry_labframe_cartesian = Psi_3D_plasma
-    else:
-        q_plasma = find_q_labframe_cart_to_cyl(q_vacuum_entry_cartesian)
-        K_plasma_entry_cartesian = find_K_labframe_cyl_to_cart(K_plasma, q_plasma)
-        Psi_3D_plasma_entry_labframe_cartesian = find_Psi_3D_labframe_cyl_to_cart(Psi_3D_plasma, K_plasma, q_plasma)
-    
-    return K_plasma_entry_cartesian, Psi_3D_plasma_entry_labframe_cartesian
+    return K_plasma, Psi_3D_plasma

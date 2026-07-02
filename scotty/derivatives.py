@@ -115,7 +115,7 @@ def derivative(
     spacings: Union[float, Dict[str, float]] = 1e-8,
     stencil: Optional[str] = None,
     use_cache: bool = True,
-) -> FloatArray:
+) -> ArrayLike:
     """Partial derivative of a function along one or more of its arguments.
 
     Currently this can take partial derivatives in one or two arguments, given
@@ -234,5 +234,9 @@ def derivative(
         if full_result is None:
             full_result = np.zeros_like(result)
         full_result += result
-
-    return cast(FloatArray, full_result) / np.prod(dim_spacings)
+    
+    # If float, return float
+    # If FloatArray, return FloatArray
+    final_result = cast(FloatArray, full_result) / np.prod(dim_spacings)
+    if isinstance(final_result, np.ndarray) and final_result.shape == (1,): return np.float64(final_result)
+    else: return final_result

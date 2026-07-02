@@ -319,16 +319,15 @@ class Parameters:
         self.Psi_3D_plasmaLaunch_labframe_cartesian = Psi_3D_plasmaLaunch_labframe_cartesian
     
     def _unpack_unused_kwargs(self, **extras):
-        extras_copy = extras.copy()
+        extras_copy = extras["extras"].copy()
 
-        if extras_copy:
-            extras_copy.pop("create_magnetic_geometry")
+        extras_copy.pop("create_magnetic_geometry", None)
         
         if extras_copy:
             _indent = max(len(max(extras, key=len)), len("keyword")) + 3
             _printmsg = "\n".join(f"       - {k:<{_indent}} {v}" for k, v in extras_copy.items())
-            
-            raise ValueError(f"""
+
+            print(f"""
     There are unsued keyword arguments that do not correspond to any function:
          {"keyword":<{_indent}} value \n{_printmsg}
     """)

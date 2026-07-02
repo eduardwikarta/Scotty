@@ -93,12 +93,12 @@ class Hamiltonian:
 
         if isinstance(field, MagneticField_Cylindrical):
             delta_R, delta_Z, delta_K_R, delta_K_zeta, delta_K_Z = deltas
-            self.spacings = {"R": delta_R, "Z": delta_Z, "K_R": delta_K_R, "K_zeta": delta_K_zeta, "K_Z": delta_K_Z}
+            self.spacings = {"q0": delta_R, "q1": delta_R, "q2": delta_Z, "K0": delta_K_R, "K1": delta_K_zeta, "K2": delta_K_Z}
             def _K_vec(K_R: ArrayLike, K_zeta: ArrayLike, K_Z: ArrayLike, q_R: ArrayLike) -> ArrayLike: return np.array([K_R, K_zeta/q_R, K_Z]) # type: ignore
 
         elif isinstance(field, MagneticField_Cartesian):
             delta_X, delta_Y, delta_Z, delta_K_X, delta_K_Y, delta_K_Z = deltas
-            self.spacings = {"X": delta_X, "Y": delta_Y, "Z": delta_Z, "K_X": delta_K_X, "K_Y": delta_K_Y, "K_Z": delta_K_Z}
+            self.spacings = {"q0": delta_X, "q1": delta_Y, "q2": delta_Z, "K0": delta_K_X, "K1": delta_K_Y, "K2": delta_K_Z}
             def _K_vec(K_X: ArrayLike, K_Y: ArrayLike, K_Z: ArrayLike, q_R: ArrayLike) -> ArrayLike: return np.array([K_X, K_Y, K_Z]) # type: ignore
         
         self._K_vec = _K_vec
@@ -118,19 +118,24 @@ class Hamiltonian:
         ##################################################
         """)
 
-    def __call__(self, q: FloatArray, K: FloatArray) -> FloatArray:
-        polflux = self.field.polflux(*q)
+    def __call__(self, q0: FloatArray, q1: FloatArray, q2: Optional[FloatArray] = None, K0: Optional[FloatArray] = None, K1: Optional[FloatArray] = None, K2: Optional[FloatArray] = None) -> FloatArray:
+
+        # This is required because we do abstraction, but derivatives doesnt like that (it requires the names of the arguments)
+        if   all(a is not None for a in [q0, q1]) and all(a is None for a in [q2, K0, K1, K2]): (q0, q1, q2), (K0, K1, K2) = q0, q1
+        elif all(a is not None for a in [q0, q1, q2, K0, K1, K2]): pass # do nothing
+        else: raise RuntimeError(f"Expected either 2 or 6 arguments but got {sum(a is None for a in [q0, q1, q2, K0, K1, K2])}")
+
+        polflux = self.field.polflux(q0, q1, q2)
         electron_density = self.density(polflux)
         temperature = self.temperature(polflux) if self.temperature else None
 
-        B_magnitude = self.field.magnitude(*q)
-        b_hat = self.field.unitvector(*q).T # to untranspose
-        K_vec = self._K_vec(*K, q_R=q[0])
+        B_magnitude = self.field.magnitude(q0, q1, q2)
+        b_hat = self.field.unitvector(q0, q1, q2)
+        K_vec = self._K_vec(K0, K1, K2, q_R=q0)
         K_magnitude = np.linalg.norm(K_vec, axis=0, keepdims=True)
         K_hat = K_vec / K_magnitude
 
-        if np.size(q[0]) == 1: sin_theta_m = np.dot(b_hat, K_hat)
-        else:                  sin_theta_m = dot(b_hat.T, K_hat.T)
+        sin_theta_m = np.dot(b_hat, K_hat) if np.size(q0) == 1 else dot(b_hat.T, K_hat.T)
         sin_theta_m_sq = cast(ArrayLike, sin_theta_m**2)
 
         Booker_alpha, Booker_beta, Booker_gamma = find_Booker_terms(
@@ -155,8 +160,8 @@ class Hamiltonian:
             ##################################################
             #
             # Calling Hamiltonian with:
-            #   - {"[R, zeta, Z]" if isinstance(self.field, MagneticField_Cylindrical) else "[X, Y, Z]"} = {q}
-            #   - {"[K_R, K_zeta, K_Z]" if isinstance(self.field, MagneticField_Cylindrical) else "[K_X, K_Y, K_Z]"} = {K}
+            #   - {"[R, zeta, Z]" if isinstance(self.field, MagneticField_Cylindrical) else "[X, Y, Z]"} = {q0, q1, q2}
+            #   - {"[K_R, K_zeta, K_Z]" if isinstance(self.field, MagneticField_Cylindrical) else "[K_X, K_Y, K_Z]"} = {K0, K1, K2}
             #
             # Calculated values:
             #   - pol. flux = {polflux}
@@ -188,36 +193,36 @@ class Hamiltonian:
 
         # Capture the location we want the derivatives at
         if isinstance(self.field, MagneticField_Cylindrical):
-            R, _, Z = q
+            R, zeta, Z = q
             K_R, K_zeta, K_Z = K
-            starts = {"R": R, "Z": Z, "K_R": K_R, "K_zeta": K_zeta, "K_Z": K_Z}
+            starts = {"q0": R, "q1": zeta, "q2": Z, "K0": K_R, "K1": K_zeta, "K2": K_Z}
 
-            derivatives = {
-                "dH_dR":     apply_stencil(("R",), "d1_FFD2"),
-                "dH_dzeta":  np.zeros(len(R)),
-                "dH_dZ":     apply_stencil(("Z",), "d1_FFD2"),
-                "dH_dKR":    apply_stencil(("K_R",), "d1_CFD2"),
-                "dH_dKzeta": apply_stencil(("K_zeta",), "d1_CFD2"),
-                "dH_dKZ":    apply_stencil(("K_Z",), "d1_CFD2"),
+            dH = {
+                "dH_dR":     (dH_dR := apply_stencil(("q0",), "d1_FFD2")),
+                "dH_dzeta":  np.zeros_like(dH_dR),
+                "dH_dZ":     apply_stencil(("q2",), "d1_FFD2"),
+                "dH_dKR":    apply_stencil(("K0",), "d1_CFD2"),
+                "dH_dKzeta": apply_stencil(("K1",), "d1_CFD2"),
+                "dH_dKZ":    apply_stencil(("K2",), "d1_CFD2"),
             }
 
             if second_order:
-                derivatives.update({
-                    "d2H_dR2":        apply_stencil(("R", "R"), "d2_FFD2"),
-                    "d2H_dZ2":        apply_stencil(("Z", "Z"), "d2_FFD2"),
-                    "d2H_dKR2":       apply_stencil(("K_R", "K_R"), "d2_CFD2"),
-                    "d2H_dKzeta2":    apply_stencil(("K_zeta", "K_zeta"), "d2_CFD2"),
-                    "d2H_dKZ2":       apply_stencil(("K_Z", "K_Z"), "d2_CFD2"),
-                    "d2H_dR_dZ":      apply_stencil(("R", "Z"), "d1d1_FFD_FFD2"),
-                    "d2H_dR_dKR":     apply_stencil(("R", "K_R"), "d1d1_FFD_CFD2"),
-                    "d2H_dR_dKzeta":  apply_stencil(("R", "K_zeta"), "d1d1_FFD_CFD2"),
-                    "d2H_dR_dKZ":     apply_stencil(("R", "K_Z"), "d1d1_FFD_CFD2"),
-                    "d2H_dZ_dKR":     apply_stencil(("Z", "K_R"), "d1d1_FFD_CFD2"),
-                    "d2H_dZ_dKzeta":  apply_stencil(("Z", "K_zeta"), "d1d1_FFD_CFD2"),
-                    "d2H_dZ_dKZ":     apply_stencil(("Z", "K_Z"), "d1d1_FFD_CFD2"),
-                    "d2H_dKR_dKZ":    apply_stencil(("K_R", "K_Z"), "d1d1_CFD_CFD2"),
-                    "d2H_dKR_dKzeta": apply_stencil(("K_R", "K_zeta"), "d1d1_CFD_CFD2"),
-                    "d2H_dKzeta_dKZ": apply_stencil(("K_zeta", "K_Z"), "d1d1_CFD_CFD2"),
+                dH.update({
+                    "d2H_dR2":        apply_stencil(("q0", "q0"), "d2_FFD2"),
+                    "d2H_dZ2":        apply_stencil(("q2", "q2"), "d2_FFD2"),
+                    "d2H_dKR2":       apply_stencil(("K0", "K0"), "d2_CFD2"),
+                    "d2H_dKzeta2":    apply_stencil(("K1", "K1"), "d2_CFD2"),
+                    "d2H_dKZ2":       apply_stencil(("K2", "K2"), "d2_CFD2"),
+                    "d2H_dR_dZ":      apply_stencil(("q0", "q2"), "d1d1_FFD_FFD2"),
+                    "d2H_dR_dKR":     apply_stencil(("q0", "K0"), "d1d1_FFD_CFD2"),
+                    "d2H_dR_dKzeta":  apply_stencil(("q0", "K1"), "d1d1_FFD_CFD2"),
+                    "d2H_dR_dKZ":     apply_stencil(("q0", "K2"), "d1d1_FFD_CFD2"),
+                    "d2H_dZ_dKR":     apply_stencil(("q2", "K0"), "d1d1_FFD_CFD2"),
+                    "d2H_dZ_dKzeta":  apply_stencil(("q2", "K1"), "d1d1_FFD_CFD2"),
+                    "d2H_dZ_dKZ":     apply_stencil(("q2", "K2"), "d1d1_FFD_CFD2"),
+                    "d2H_dKR_dKZ":    apply_stencil(("K0", "K2"), "d1d1_CFD_CFD2"),
+                    "d2H_dKR_dKzeta": apply_stencil(("K0", "K1"), "d1d1_CFD_CFD2"),
+                    "d2H_dKzeta_dKZ": apply_stencil(("K1", "K2"), "d1d1_CFD_CFD2"),
                 })
         
         # equivalent to elif isinstance(self.field, MagneticField_Cartesian):
@@ -225,44 +230,44 @@ class Hamiltonian:
         else: 
             X, Y, Z = q
             K_X, K_Y, K_Z = K
-            starts = {"X": X, "Y": Y, "Z": Z, "K_X": K_X, "K_Y": K_Y, "K_Z": K_Z}
+            starts = {"q0": X, "q1": Y, "q2": Z, "K0": K_X, "K1": K_Y, "K2": K_Z}
 
-            derivatives = {
-                "dH_dX":     apply_stencil(("X",), "d1_FFD2"),
-                "dH_dY":     apply_stencil(("Y",), "d1_FFD2"),
-                "dH_dZ":     apply_stencil(("Z",), "d1_FFD2"),
-                "dH_dKX":    apply_stencil(("K_X",), "d1_CFD2"),
-                "dH_dKY":    apply_stencil(("K_Y",), "d1_CFD2"),
-                "dH_dKZ":    apply_stencil(("K_Z",), "d1_CFD2"),
+            dH = {
+                "dH_dX":     apply_stencil(("q0",), "d1_FFD2"),
+                "dH_dY":     apply_stencil(("q1",), "d1_FFD2"),
+                "dH_dZ":     apply_stencil(("q2",), "d1_FFD2"),
+                "dH_dKX":    apply_stencil(("K0",), "d1_CFD2"),
+                "dH_dKY":    apply_stencil(("K1",), "d1_CFD2"),
+                "dH_dKZ":    apply_stencil(("K2",), "d1_CFD2"),
             }
 
             if second_order:
-                derivatives.update({
-                    "d2H_dX2":     apply_stencil(("X", "X"), "d2_FFD2"),
-                    "d2H_dY2":     apply_stencil(("Y", "Y"), "d2_FFD2"),
-                    "d2H_dZ2":     apply_stencil(("Z", "Z"), "d2_FFD2"),
-                    "d2H_dX_dY":   apply_stencil(("X", "Y"), "d1d1_FFD_FFD2"),
-                    "d2H_dX_dZ":   apply_stencil(("X", "Z"), "d1d1_FFD_FFD2"),
-                    "d2H_dY_dZ":   apply_stencil(("Y", "Z"), "d1d1_FFD_FFD2"),
-                    "d2H_dKX2":    apply_stencil(("K_X", "K_X"), "d2_CFD2"),
-                    "d2H_dKY2":    apply_stencil(("K_Y", "K_Y"), "d2_CFD2"),
-                    "d2H_dKZ2":    apply_stencil(("K_Z", "K_Z"), "d2_CFD2"),
-                    "d2H_dKX_dKY": apply_stencil(("K_X", "K_Y"), "d1d1_CFD_CFD2"),
-                    "d2H_dKX_dKZ": apply_stencil(("K_X", "K_Z"), "d1d1_CFD_CFD2"),
-                    "d2H_dKY_dKZ": apply_stencil(("K_Y", "K_Z"), "d1d1_CFD_CFD2"),
-                    "d2H_dX_dKX":  apply_stencil(("X", "K_X"), "d1d1_FFD_CFD2"),
-                    "d2H_dX_dKY":  apply_stencil(("X", "K_Y"), "d1d1_FFD_CFD2"),
-                    "d2H_dX_dKZ":  apply_stencil(("X", "K_Z"), "d1d1_FFD_CFD2"),
-                    "d2H_dY_dKX":  apply_stencil(("Y", "K_X"), "d1d1_FFD_CFD2"),
-                    "d2H_dY_dKY":  apply_stencil(("Y", "K_Y"), "d1d1_FFD_CFD2"),
-                    "d2H_dY_dKZ":  apply_stencil(("Y", "K_Z"), "d1d1_FFD_CFD2"),
-                    "d2H_dZ_dKX":  apply_stencil(("Z", "K_X"), "d1d1_FFD_CFD2"),
-                    "d2H_dZ_dKY":  apply_stencil(("Z", "K_Y"), "d1d1_FFD_CFD2"),
-                    "d2H_dZ_dKZ":  apply_stencil(("Z", "K_Z"), "d1d1_FFD_CFD2"),
+                dH.update({
+                    "d2H_dX2":     apply_stencil(("q0", "q0"), "d2_FFD2"),
+                    "d2H_dY2":     apply_stencil(("q1", "q1"), "d2_FFD2"),
+                    "d2H_dZ2":     apply_stencil(("q2", "q2"), "d2_FFD2"),
+                    "d2H_dX_dY":   apply_stencil(("q0", "q1"), "d1d1_FFD_FFD2"),
+                    "d2H_dX_dZ":   apply_stencil(("q0", "q2"), "d1d1_FFD_FFD2"),
+                    "d2H_dY_dZ":   apply_stencil(("q1", "q2"), "d1d1_FFD_FFD2"),
+                    "d2H_dKX2":    apply_stencil(("K0", "K0"), "d2_CFD2"),
+                    "d2H_dKY2":    apply_stencil(("K1", "K1"), "d2_CFD2"),
+                    "d2H_dKZ2":    apply_stencil(("K2", "K2"), "d2_CFD2"),
+                    "d2H_dKX_dKY": apply_stencil(("K0", "K1"), "d1d1_CFD_CFD2"),
+                    "d2H_dKX_dKZ": apply_stencil(("K0", "K2"), "d1d1_CFD_CFD2"),
+                    "d2H_dKY_dKZ": apply_stencil(("K1", "K2"), "d1d1_CFD_CFD2"),
+                    "d2H_dX_dKX":  apply_stencil(("q0", "K0"), "d1d1_FFD_CFD2"),
+                    "d2H_dX_dKY":  apply_stencil(("q0", "K1"), "d1d1_FFD_CFD2"),
+                    "d2H_dX_dKZ":  apply_stencil(("q0", "K2"), "d1d1_FFD_CFD2"),
+                    "d2H_dY_dKX":  apply_stencil(("q1", "K0"), "d1d1_FFD_CFD2"),
+                    "d2H_dY_dKY":  apply_stencil(("q1", "K1"), "d1d1_FFD_CFD2"),
+                    "d2H_dY_dKZ":  apply_stencil(("q1", "K2"), "d1d1_FFD_CFD2"),
+                    "d2H_dZ_dKX":  apply_stencil(("q2", "K0"), "d1d1_FFD_CFD2"),
+                    "d2H_dZ_dKY":  apply_stencil(("q2", "K1"), "d1d1_FFD_CFD2"),
+                    "d2H_dZ_dKZ":  apply_stencil(("q2", "K2"), "d1d1_FFD_CFD2"),
                 })
 
         if log.isEnabledFor(5):
-            _printmsg = "\n".join(f"            #   - {k} = {v}" for k, v in derivatives.items())
+            _printmsg = "\n".join(f"            #   - {k} = {v}" for k, v in dH.items())
             log.trace(f"""
             ##################################################
             #
@@ -275,7 +280,7 @@ class Hamiltonian:
             ##################################################
             """)
         
-        return derivatives
+        return dH
 
 
 
@@ -349,10 +354,11 @@ def hessians(dH: dict, cartesian: bool) -> Tuple[FloatArray, FloatArray, FloatAr
             \nabla_K \nabla_K H \\
           \end{gather}
     """
-
+    
     def reshape(array: FloatArray):
         """Such that shape is [points,3,3] instead of [3,3,points]"""
-        return array if array.ndim == 2 else np.moveaxis(np.squeeze(array), 2, 0)
+        if array.ndim == 2: return array
+        return np.moveaxis(np.squeeze(array), 2, 0)
 
     if not cartesian: # isinstance(field, MagneticField_Cylindrical):
         d2H_dR2        = dH["d2H_dR2"]

@@ -34,6 +34,7 @@ def _add_log_level(levelname, levelvalue):
 def _validate_log_level(log_level: Union[str, int], log_location: str) -> int:
 
     if isinstance(log_level, str):
+        log_level = log_level.lower()
         if log_level in _valid_log_level_dict:
             log_level = _valid_log_level_dict[log_level]
         else:

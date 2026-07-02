@@ -471,7 +471,7 @@ def create_magnetic_geometry(
     if find_B_method == "omfit":
         log.debug(f"Using OMFIT JSON Torbeam file for B and poloidal flux")
         if geometry == "cartesian": raise ValueError(f"`find_B_method` = 'omfit' only works for `geometry` = 'cylindrical'")
-        topfile = magnetic_data_path / f"topfile{input_filename_suffix}"
+        topfile = magnetic_data_path / f"topfile{input_filename_suffix}.json"
 
         with open(topfile) as f: data = json.load(f)
         R_coord = np.array(data["R"])

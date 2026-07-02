@@ -8,7 +8,7 @@ from scotty.geometry_v4 import MagneticField_Cartesian, MagneticField_Cylindrica
 from scotty.hamiltonian_v4 import Hamiltonian
 from scotty.logger_v4 import timer
 from scotty.typing import FloatArray
-from sklearn.utils import Bunch
+# from sklearn.utils import Bunch
 from typing import Any, Callable, Dict, Protocol, Union, Tuple, cast
 
 log = logging.getLogger(__name__)
@@ -228,15 +228,18 @@ def handle_terminating_event(
 
 
 
-def d_ray_parameters_d_tau(ray_parameters: FloatArray, hamiltonian: Hamiltonian) -> FloatArray:
-
+def d_ray_parameters_d_tau(tau: FloatArray, ray_parameters: FloatArray, hamiltonian: Hamiltonian) -> FloatArray:
+    # tau is unused here, but solve_ivp is strict about the function signatures and requires something like
+    # f(t, y, y0), so we put the tau here so that it stops complaining
     dH = hamiltonian.derivatives(ray_parameters[:3], ray_parameters[-3:])
-    d_ray_parameters_d_tau = np.zeros_like(ray_parameters, dtype=np.float64)
+    # d_ray_parameters_d_tau = np.zeros_like(ray_parameters, dtype=np.float64)
+    d_ray_parameters_d_tau = np.zeros(6, dtype=np.float64)
 
     for i, v in enumerate(dH.values()):
-        # i < 3:  wavevector derivative
+        # i < 3:  wavevector derivatives
+        # i == 4: dH/dK_zeta = 0
         # i >= 3: spatial derivatives
-        d_ray_parameters_d_tau[i] = v if i < 3 else -v
+        d_ray_parameters_d_tau[(i+3)%6] = -v if i < 3 else v
     
     return d_ray_parameters_d_tau
 
@@ -328,11 +331,11 @@ def propagate_ray(
             return np.sqrt(K0**2 + K1**2 + K2**2) if isinstance(hamiltonian.field, MagneticField_Cartesian) else np.sqrt(K0**2 + (K1/q0)**2 + K2**2)
         
         tau_cutoff = minimize_scalar(fun=K_magnitude, bounds=[0, tau_arr_resampled[-1]], tol=atol)
-        tau_arr_resampled = np.sort(np.append(np.linspace(start=0, stop=tau_terminating_event, num=len_tau-1, endpoint=False), tau_cutoff))
+        tau_arr_resampled = np.sort(np.append(np.linspace(start=0, stop=tau_terminating_event, num=len_tau-1, endpoint=False), tau_cutoff.x))
     
     else:
         tau_arr_resampled = np.linspace(start=0, stop=tau_terminating_event, num=len_tau-1, endpoint=False)
-
+    
     # For ray-tracing runs, return `tau` and `result` (containing `q`, `K`)
     # Otherwise return `tau_terminating_event` and `tau_arr_resampled` (since the beam solver calculates everything again) 
     if ray_tracing: return tau_arr_resampled, soln_interp(tau_arr_resampled)
