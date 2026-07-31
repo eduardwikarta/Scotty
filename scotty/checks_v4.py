@@ -20,6 +20,7 @@ VALID_LAUNCH_MODE_FLAGS = Literal[1, -1, "O", "X"]
 VALID_LAUNCH_FLAGS = Literal["plasma", "vacuum"]
 VALID_BOUNDARY_FLAGS = Optional[Literal["continuous", "discontinuous"]]
 VALID_FIELDS = Union[MagneticField_Cylindrical, MagneticField_Cartesian]
+VALID_SOLVER_STATUS = Literal[-1, 0, 1]
 
 ##################################################
 #
@@ -32,17 +33,27 @@ log = logging.getLogger(__name__)
 class Parameters:
     # Initialisating here to stop type checker from complaining
     geometry: VALID_GEOMETRIES
+    cartesian: bool
     mode_flag_launch: VALID_LAUNCH_MODE_FLAGS
     mode_flag_initial: Literal[1,-1]
     launch_flag: VALID_LAUNCH_FLAGS
     boundary_flag: VALID_BOUNDARY_FLAGS
 
+    solver_status: VALID_SOLVER_STATUS
+    solver_nfev: int
+    solver_duration: float
+    tau_output: FloatArray
     q_initial: FloatArray
+    q_output: FloatArray
     K_launch: Optional[FloatArray]
     K_initial: FloatArray
+    K_output: FloatArray
+    K_output_mag: FloatArray
+    K_output_hat: FloatArray
     Psi_3D_launch_labframe: Optional[ComplexFloatArray]
     Psi_3D_entry_labframe: Optional[ComplexFloatArray]
-    Psi_3D_initial_labframe: ComplexFloatArray
+    Psi_3D_initial_labframe: Optional[ComplexFloatArray]
+    Psi_3D_output_labframe: Optional[ComplexFloatArray]
     distance_from_launch_to_entry: Optional[float]
     e_hat_initial: ComplexFloatArray
     mode_flag_initial: Literal[1, -1]
@@ -99,7 +110,7 @@ class Parameters:
         detailed_analysis_flag: bool,
 
         # Additional flags
-        ray_tracing: bool,
+        ray_tracing_flag: bool,
         return_dt_field: bool,
 
         # Extra kwargs for parsing
@@ -113,6 +124,7 @@ class Parameters:
         ##################################################
 
         self.geometry = geometry
+        self.cartesian_flag = isinstance(geometry, MagneticField_Cartesian)
 
         # TORBEAM antenna angles are anti-clockwise from negative X-axis,
         # so we need to rotate the toroidal angle by pi. This will take
@@ -142,7 +154,7 @@ class Parameters:
         #
         ##################################################
 
-        self.ray_tracing = ray_tracing
+        self.ray_tracing_flag = ray_tracing_flag
         self.launch_flag = launch_flag
         self.boundary_flag = boundary_flag
         self.relativistic_flag = relativistic_flag
@@ -162,22 +174,24 @@ class Parameters:
 
         self.find_B_method = find_B_method if isinstance(find_B_method, str) else str(type(find_B_method))
         self.magnetic_data_path = self._check_data_path("magnetic", magnetic_data_path)
-        self.input_filename_suffix = input_filename_suffix
         (self.interp_order_magnetic_data_str,
          self.interp_order_magnetic_data_int) = self._check_interp_order("magnetic", interp_order)
-        _, self.interp_order_ne_data = self._check_interp_order("ne", interp_order) # TO REMOVE -- is this needed? or same interp_order for B and ne?
-        self.interp_smoothing = interp_smoothing
-        self.shot = shot
-        self.equil_time = equil_time
 
         self.ne_data_path = self._check_data_path("ne", ne_data_path)
+        _, self.interp_order_ne_data = self._check_interp_order("ne", interp_order) # TO REMOVE -- is this needed? or same interp_order for B and ne?
         self.density_fit_parameters = density_fit_parameters
         self.density_fit_method = density_fit_method
 
         self.Te_data_path = self._check_data_path("Te", Te_data_path)
+        self.interp_order_Te_data = None # TO REMOVE -- not implemented yet?
         self.temperature_fit_parameters = temperature_fit_parameters
         self.temperature_fit_method = temperature_fit_method
 
+        self.interp_smoothing = interp_smoothing
+        self.shot = shot
+        self.equil_time = equil_time
+
+        self.input_filename_suffix = input_filename_suffix
         self.output_path = self._check_data_path("output", output_path)
         self.output_filename_suffix = output_filename_suffix
 

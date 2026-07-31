@@ -2,17 +2,18 @@
 import logging
 import numpy as np
 import pathlib
-from scotty.beam_solver_v4 import evolve_beam
+from scotty.beam_solver_v4 import beam_tracing
 from scotty.checks_v4 import VALID_GEOMETRIES, VALID_LAUNCH_FLAGS, VALID_LAUNCH_MODE_FLAGS, VALID_BOUNDARY_FLAGS, Parameters, check_input_before_ray_tracing
+from scotty.fun_general_v4 import find_K_magnitude
 from scotty.geometry_v4 import MagneticField_Cylindrical, MagneticField_Cartesian, create_magnetic_geometry
 from scotty.hamiltonian_v4 import initialise_hamiltonians, assign_hamiltonians
 from scotty.launch_v4 import find_plasma_entry_position, find_auto_delta_signs, find_plasma_entry_parameters
 from scotty.logger_v4 import config_logger, arr2str
 from scotty.profile_fit import ProfileFitLike, profile_fit
-from scotty.ray_solver_v4 import propagate_ray
+from scotty.ray_solver_v4 import ray_tracing
 from scotty.typing import FloatArray, PathLike
 from scotty._version import __version__
-from typing import Optional, Sequence, Union, cast
+from typing import Optional, Sequence, Tuple, Union, Literal, cast
 import uuid
 
 def beam_me_up(
@@ -79,7 +80,7 @@ def beam_me_up(
     # TO REMOVE -- need to put individual flags for each plot
 
     # Additional flags
-    ray_tracing: bool = False,     # For quick runs (only ray tracing)
+    ray_tracing_flag: bool = False,     # For quick runs (only ray tracing)
     return_dt_field: bool = False, # For returning the datatree, field class, and Hamiltonians
 
     # Keeping the extra kwargs for parsing later
@@ -144,7 +145,7 @@ def beam_me_up(
         detailed_analysis_flag = detailed_analysis_flag,
 
         # Additional flags
-        ray_tracing = ray_tracing,
+        ray_tracing_flag = ray_tracing_flag,
         return_dt_field = return_dt_field,
 
         # Extra kwargs for parsing
@@ -165,7 +166,7 @@ def beam_me_up(
     ##################################################
     #
     # Beam trace me up, Scotty!
-    # scotty version {__version__}
+    # Version {__version__}
     # Run ID: {uuid.uuid4()}
     #
     ##################################################
@@ -274,6 +275,7 @@ def beam_me_up(
         params.mode_flag_initial,
         params.mode_index,
     ) = find_plasma_entry_parameters(
+        ray_tracing_flag = params.ray_tracing_flag,
         launch_flag = params.launch_flag,
         boundary_flag = params.boundary_flag,
         mode_flag_launch = params.mode_flag_launch,
@@ -288,7 +290,7 @@ def beam_me_up(
         Psi_3D_plasmaLaunch_labframe_cartesian = params.Psi_3D_plasmaLaunch_labframe_cartesian,
         hamiltonian_pos1 = hamiltonian_pos1,
         hamiltonian_neg1 = hamiltonian_neg1,
-        tol_H = 1e-2,
+        tol_H = 1e-3,
         tol_O_mode_polarisation = 0.25)
     
     # Assigning the correct Hamiltonian
@@ -314,22 +316,27 @@ def beam_me_up(
     ##################################################
     """)
 
-    ray_tracing_result = propagate_ray(
+    ray_tracing_result = ray_tracing(
         q_initial = params.q_initial,
         K_initial = params.K_initial,
         poloidal_flux_enter = params.poloidal_flux_enter,
         hamiltonian = hamiltonian,
-        ray_tracing = params.ray_tracing,
+        ray_tracing_flag = params.ray_tracing_flag,
         rtol = params.rtol,
         atol = params.atol,
         len_tau = params.len_tau,
         # tau_max = 1e5,
     )
 
-    if params.ray_tracing: return ray_tracing_result # 2-tuple of (tau_arr, q_K_arrs)
-    else: tau_points, tau_terminating_event = ray_tracing_result
+    if params.ray_tracing_flag: # if ray_tracing_flag, then ray_tracing_result is 2-tuple of (tau_arr, q_K_arrs)
+        solver_status, solver_nfev, solver_duration, tau_output, q_K_output = cast(Tuple[Literal[1, 0, -1], int, float, FloatArray, FloatArray], ray_tracing_result)
+        q_output = q_K_output[:3] # (3, N)
+        K_output = q_K_output[3:] # (3, N)
+        Psi_3D_output_labframe = None
+    else: # otherwise just take the tau_array with tau of terminating event and pass into beam-tracing
+        _, _, _, tau_points, tau_terminating_event = cast(Tuple[Literal[1, 0, -1], int, float, FloatArray, float], ray_tracing_result)
 
-    log.info(f"""\n
+        log.info(f"""\n
     ##################################################
     #
     # BEAM TRACING ROUTINE
@@ -337,24 +344,45 @@ def beam_me_up(
     ##################################################
     """)
 
-    # (   solver_status,
-    #     tau_array,
-    #     q_output,
-    #     K_output,
-    #     Psi_3D_output_labframe,
-    # ) =
-    return evolve_beam(
-        tau_leave = cast(float, tau_terminating_event),
-        tau_points = tau_points,
-        q_initial = params.q_initial,
-        K_initial = params.K_initial,
-        Psi_3D_initial_labframe = params.Psi_3D_initial_labframe,
-        hamiltonian = hamiltonian,
-        rtol = params.rtol,
-        atol = params.atol
-    )
+        (   solver_status,
+            solver_nfev,
+            solver_duration,
+            tau_output, # (N,)
+            q_output, # (3, N)
+            K_output, # (3, N)
+            Psi_3D_output_labframe, # (N, 3, 3)
+        ) = beam_tracing(
+            tau_leave = tau_terminating_event,
+            tau_points = tau_points,
+            q_initial = params.q_initial,
+            K_initial = params.K_initial,
+            Psi_3D_initial_labframe = params.Psi_3D_initial_labframe,
+            hamiltonian = hamiltonian,
+            rtol = params.rtol,
+            atol = params.atol,
+        )
+    
+    return solver_status, tau_output, q_output, K_output, Psi_3D_output_labframe
 
-    # Extra stuff, for saving data etc
+    # Once the ray/beam-tracing is complete, save the data in params
+    # We make the code agnostic, e.g. Psi_3D is generated as an array
+    # for both ray- and beam-tracing, where for the former it is an
+    # array of None and the latter a complex-valued array
+
+    params.solver_status = solver_status
+    params.solver_nfev = solver_nfev
+    params.solver_duration = solver_duration
+
+    params.tau_output = tau_output # (N,)
+
+    params.q_output = q_output.T # (3, N) -> (N, 3)
+    # q_mag = np.linalg.norm(params.q_output, axis=1) # (N,)
+
+    params.K_output = ( K_output / 1 if params.cartesian_flag else np.array([1, q_output[0], 1])[:, np.newaxis] ).T # (3, N) -> (N, 3)
+    params.K_output_mag = find_K_magnitude(params.cartesian_flag, *K_output, q_output[0]) # (N,)
+    params.K_output_hat = params.K_output / params.K_output_mag[:, np.newaxis] # (3, N) -> (N, 3)
+
+    params.Psi_3D_output_labframe = Psi_3D_output_labframe
 
 
 

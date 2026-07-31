@@ -18,6 +18,7 @@ from scotty.fun_general_v4 import (
 )
 from scotty.hamiltonian_v4 import Hamiltonian
 from scotty.logger_v4 import arr2str
+from scotty.ray_solver_v4 import ray_tracing
 from scotty.typing import ArrayLike, FloatArray, ComplexFloatArray
 from typing import Tuple, Literal, Optional, cast
 
@@ -107,11 +108,13 @@ def find_K_plasma(
         # of the cartesian calculations (when Y=0). Hence, for example,
         # we have dp/dX = dp/dR and dp/dY = dp/dzeta
         if isinstance(field, MagneticField_Cylindrical):
+            cart = False
             delta_R, delta_Z = hamiltonian.spacings["q0"], hamiltonian.spacings["q2"]
             dp_dX = field.d_polflux_dR(*q_entry, delta_R=delta_R)
             dp_dY = np.zeros_like(dp_dX)
             dp_dZ = field.d_polflux_dZ(*q_entry, delta_Z=delta_Z)
         else:
+            cart = True
             delta_X, delta_Y, delta_Z = hamiltonian.spacings["q0"], hamiltonian.spacings["q1"], hamiltonian.spacings["q2"]
             dp_dX = field.d_polflux_dX(*q_entry, delta_X=delta_X)
             dp_dY = field.d_polflux_dY(*q_entry, delta_Y=delta_Y)
@@ -140,7 +143,7 @@ def find_K_plasma(
         Finding K at the plasma entry point with {boundary_flag} boundary conditions
         ##################################################
         #
-        # Calculated at {"[X, Y, Z]" if isinstance(field, MagneticField_Cartesian) else "[R, zeta, Z]"} = {q_entry}:
+        # Calculated at {"[X, Y, Z]" if cart else "[R, zeta, Z]"} = {q_entry}:
         #   - B_vec = {B_vec}
         #   - b_hat = {b_hat}
         #   - |B| = {B_magnitude}
@@ -151,16 +154,16 @@ def find_K_plasma(
         #   - w_R  / w_launch = {omega_R}
         #   - w_UH / w_launch = {omega_UH}
         #
-        #   - {"d(polflux)/dX" if isinstance(field, MagneticField_Cartesian) else "d(polflux)/dR"} = {dp_dX}
-        #   - {"d(polflux)/dY" if isinstance(field, MagneticField_Cartesian) else "d(polflux)/dzeta"} = {dp_dY}
-        #   - {"d(polflux)/dZ" if isinstance(field, MagneticField_Cartesian) else "d(polflux)/dZ"} = {dp_dZ}
+        #   - {"d(polflux)/dX" if cart else "d(polflux)/dR"} = {dp_dX}
+        #   - {"d(polflux)/dY" if cart else "d(polflux)/dzeta"} = {dp_dY}
+        #   - {"d(polflux)/dZ" if cart else "d(polflux)/dZ"} = {dp_dZ}
         #
         ##################################################
         """)
 
         # TO REMOVE -- need to rewrite andf refactor this properly. 12 Nov
         mode_flag_sign = 1 # find_mode_flag_sign(electron_density_p, B_magnitude, launch_angular_frequency, temperature)
-        if ((mode_flag_sign * mode_flag == 1  and plasma_freq >= 1) or
+        if ((mode_flag_sign * mode_flag ==  1 and plasma_freq >= 1) or
             (mode_flag_sign * mode_flag == -1 and omega_L >= 1) or
             (mode_flag_sign * mode_flag == -1 and omega_R >= 1 and omega_UH <= 1)):
             raise ValueError("Error: cut-off freq higher than beam freq on plasma side of plasma-vac boundary")
@@ -330,7 +333,7 @@ def find_Psi_3D_plasma(
         # The cylindrical calculations which follow are all special cases
         # of the cartesian calculations (when Y=0). Hence, for example,
         # we have dp/dX = dp/dR and dp/dY = dp/dzeta
-        if isinstance(field, MagneticField_Cylindrical):
+        if not cart:
             dH = hamiltonian.derivatives(q_entry, K_plasma)
 
             delta_R, delta_Z = hamiltonian.spacings["q0"], hamiltonian.spacings["q2"]
@@ -418,6 +421,11 @@ def find_Psi_3D_plasma(
         Psi_YZ_v = Psi_3D_vacuum_labframe[1,2]
         Psi_ZZ_v = Psi_3D_vacuum_labframe[2,2]
 
+        print()
+        print("bc_v4:425, Psi_3D_vacuum_labframe")
+        print(Psi_3D_vacuum_labframe)
+        print()
+
         # Now we set up the interface matrix using 6 linearly
         # independent equations to obtain a relation between the
         # entries of "Psi_v" and "Psi_p". Note that this matrix
@@ -430,6 +438,7 @@ def find_Psi_3D_plasma(
             [dp_dY**2, -2*dp_dX*dp_dY,  0,                       dp_dX**2,  0,                       0                 ],
             [dp_dZ**2,  0,             -2*dp_dX*dp_dZ,           0,         0,                       dp_dX**2          ],
             [dp_dZ**2,  2*dp_dZ**2,    -2*dp_dZ*(dp_dX + dp_dY), dp_dZ**2, -2*dp_dZ*(dp_dX + dp_dY), (dp_dX + dp_dY)**2],
+            # [0,  dp_dZ, 0, 0, -dp_dX, 0], # TO REMOVE
             [dH_dKx,    dH_dKy,        dH_dKz,                   0,         0,                       0                 ],
             [0,         dH_dKx,        0,                        dH_dKy,    dH_dKz,                  0                 ],
             [0,         0,             dH_dKx,                   0,         dH_dKy,                  dH_dKz            ],
@@ -444,6 +453,8 @@ def find_Psi_3D_plasma(
         #        {arr2str(interface_matrix[3])}
         #        {arr2str(interface_matrix[4])}
         #        {arr2str(interface_matrix[5])}
+        #
+        #   - np.linalg.cond(interface matrix) = {np.linalg.cond(interface_matrix)}
         #""")
 
         # For discontinuous boundary conditions, we have that
@@ -483,10 +494,11 @@ def find_Psi_3D_plasma(
             (Psi_XX_v * dp_dY**2) + (Psi_YY_v * dp_dX**2) - (2 * Psi_XY_v * dp_dX * dp_dY) + 2*(K_X_v - K_X_p)*dp_dX*eta_XY + 2*(K_Y_v - K_Y_p)*dp_dY*eta_XY,
             (Psi_XX_v * dp_dZ**2) + (Psi_ZZ_v * dp_dX**2) - (2 * Psi_XZ_v * dp_dX * dp_dZ) + 2*(K_X_v - K_X_p)*dp_dX*eta_XZ + 2*(K_Z_v - K_Z_p)*dp_dZ*eta_XZ,
         Psi_XX_v*dp_dZ**2 + Psi_YY_v*dp_dZ**2 + Psi_ZZ_v*(dp_dX + dp_dY)**2 + 2*Psi_XY_v*dp_dZ**2 - 2*(Psi_XZ_v + Psi_YZ_v)*dp_dZ*(dp_dX + dp_dY) + 2*(K_X_v - K_X_p)*dp_dX*eta_XYZ + 2*(K_Y_v - K_Y_p)*dp_dY*eta_XYZ + 2*(K_Z_v - K_Z_p)*dp_dZ*eta_XYZ,
+        # Psi_XY_v*dp_dZ - Psi_YZ_v*dp_dX, # TO REMOVE
              -dH_dX,
              -dH_dY,
              -dH_dZ,
-        ], dtype=complex)
+        ])#, dtype=complex)
         
         # We access the first 3 items twice because they are tuples
         log.debug(f"""
@@ -514,7 +526,7 @@ def find_Psi_3D_plasma(
         # of which being that numerical inaccuracies tend to creep in when the
         # norm of the rows of the matrix differ by several orders of magnitude,
         # which is the case most of the time:
-        #   || rows with poloidal derivatives || >> || rows with H derivatives ||
+        #   || rows with poloidal flux derivatives || >> || rows with H derivatives ||
         #
         # Furthermore, it is actually more computationally expensive to
         # calculate the inverse than to solve the system via Gaussian,
@@ -554,13 +566,14 @@ def find_Psi_3D_plasma(
 
 
 def apply_boundary_conditions(
+    ray_tracing_flag: bool,
     boundary_flag: VALID_BOUNDARY_FLAGS,
     q_vacuum_entry_cartesian: FloatArray,
     K_vacuum_entry_cartesian: FloatArray,
-    Psi_3D_vacuum_entry_labframe_cartesian: ComplexFloatArray,
+    Psi_3D_vacuum_entry_labframe: Optional[ComplexFloatArray],
     field: VALID_FIELDS,
     hamiltonian: Hamiltonian,
-) -> Tuple[FloatArray, ComplexFloatArray]:
+) -> Tuple[FloatArray, Optional[ComplexFloatArray]]:
     r"""Apply boundary conditions at the plasma-vacuum boundary where
     the electron density profile can be: (i) continuous and differentiable
     (None); (ii) continuous but not differentiable ("continuous"); or
@@ -572,11 +585,6 @@ def apply_boundary_conditions(
     only for `Psi_3D_vacuum` and `Psi_3D_plasma`, while we have that
     `K_vacuum` == `K_plasma`. For (iii), `discontinuous` boundary condition is
     applied to find both `K_plasma` and `Psi_3D_plasma`.
-
-    Note that this function only accepts variables in cartesian
-    coordinates because of the way the outer function
-    (find_plasma_entry_parameters()) was constructed (i.e. the calculations
-    are only done in cartesian and then converted later if necessary).
     
     Returns `K_plasma` and `Psi_3D_plasma` in cylindrical (cartesian) if
     the field type is cylindrical (cartesian).
@@ -599,14 +607,11 @@ def apply_boundary_conditions(
     if isinstance(field, MagneticField_Cylindrical):
         cart = False
         q_entry = find_q_labframe_cart_to_cyl(q_vacuum_entry_cartesian)
-        q_entry[1] = 0.0 # Because of the Y=0 assumption
         K_vacuum = find_K_labframe_cart_to_cyl(K_vacuum_entry_cartesian, q_vacuum_entry_cartesian)
-        Psi_3D_vacuum = find_Psi_3D_labframe_cart_to_cyl(Psi_3D_vacuum_entry_labframe_cartesian, K_vacuum_entry_cartesian, q_vacuum_entry_cartesian)
     else:
         cart = True
         q_entry = q_vacuum_entry_cartesian
         K_vacuum = K_vacuum_entry_cartesian
-        Psi_3D_vacuum = Psi_3D_vacuum_entry_labframe_cartesian
     
     # Find `K_plasma`
     K_plasma = find_K_plasma(
@@ -618,14 +623,16 @@ def apply_boundary_conditions(
     )
 
     # Find `Psi_3D_labframe`
-    Psi_3D_plasma = find_Psi_3D_plasma(
-        boundary_flag = boundary_flag,
-        q_entry = q_entry,
-        K_vacuum = K_vacuum,
-        K_plasma = K_plasma,
-        Psi_3D_vacuum_labframe = Psi_3D_vacuum,
-        field = field,
-        hamiltonian = hamiltonian,
-    )
+    if ray_tracing_flag: Psi_3D_plasma = None
+    else:
+        Psi_3D_plasma = find_Psi_3D_plasma(
+            boundary_flag = boundary_flag,
+            q_entry = q_entry,
+            K_vacuum = K_vacuum,
+            K_plasma = K_plasma,
+            Psi_3D_vacuum_labframe = cast(ComplexFloatArray, Psi_3D_vacuum_entry_labframe),
+            field = field,
+            hamiltonian = hamiltonian,
+        )
 
     return K_plasma, Psi_3D_plasma

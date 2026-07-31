@@ -3,13 +3,14 @@ import numpy as np
 from scipy.integrate import solve_ivp
 from scipy.integrate._ivp.ivp import OdeSolution
 from scipy.optimize import minimize_scalar
+from scotty.checks_v4 import VALID_SOLVER_STATUS
 from scotty.fun_general_v4 import find_normalised_gyro_freq, find_K_magnitude
 from scotty.geometry_v4 import MagneticField_Cartesian, MagneticField_Cylindrical
 from scotty.hamiltonian_v4 import Hamiltonian
 from scotty.logger_v4 import timer
 from scotty.typing import FloatArray
 # from sklearn.utils import Bunch
-from typing import Any, Callable, Dict, Protocol, Union, Tuple, cast
+from typing import Any, Callable, Dict, Literal, Protocol, Union, Tuple, cast
 
 log = logging.getLogger(__name__)
 
@@ -53,7 +54,7 @@ def make_solver_events(
     
     # Triggers when the beam leaves the LCFS
     #   -ve -> +ve when leaving LCFS
-    @_event(terminal = False, direction = 1.0)
+    @_event(terminal=False, direction=1.0)
     def event_leave_LCFS(tau, ray_parameters, hamiltonian):
         q0, q1, q2, _, _, _ = ray_parameters
         polflux = field.polflux(q0, q1, q2)
@@ -83,7 +84,7 @@ def make_solver_events(
     # ***Used to include a `delta_gyro_freq` where the event triggers
     #    when the beam frequency is close to this frequency, but this
     #    was removed because it worked unreliably
-    @_event(terminal = True, direction = 0.0)
+    @_event(terminal=True, direction=0.0)
     def event_cross_resonance(tau, ray_parameters, hamiltonian):
         q0, q1, q2, _, _, _ = ray_parameters
         B_magnitude = field.magnitude(q0, q1, q2)
@@ -101,7 +102,7 @@ def make_solver_events(
     # ***Used to include a `delta_gyro_freq` where the event triggers
     #    when the beam frequency is close to this frequency, but this
     #    was removed because it worked unreliably
-    @_event(terminal = True, direction = 0.0)
+    @_event(terminal=True, direction=0.0)
     def event_cross_resonance2(tau, ray_parameters, hamiltonian):
         q0, q1, q2, _, _, _ = ray_parameters
         B_magnitude = field.magnitude(q0, q1, q2)
@@ -118,7 +119,7 @@ def make_solver_events(
     
     # Triggers when the cut-off location is reached (i.e. when the
     # wavenumber K is minimised)
-    @_event(terminal = False, direction = 1.0)
+    @_event(terminal=False, direction=1.0)
     def event_reach_K_min(tau, ray_parameters, hamiltonian: Hamiltonian):
         q0, q1, q2, K0, K1, K2 = ray_parameters
         q = np.array([q0, q1, q2])
@@ -191,9 +192,9 @@ def handle_terminating_event(
 
     # Event names here must match those in the `solver_ray_events`
     # dict defined outside this function
-    if detected("leave_plasma") and not detected("leave_LCFS"):
-        log.info(f"Ray has left plasma")
-        return tau_events["leave_plasma"][0]
+    # if detected("leave_plasma") and not detected("leave_LCFS"):
+    #     log.info(f"Ray has left plasma")
+    #     return tau_events["leave_plasma"][0]
 
     if detected("cross_resonance"):
         log.info(f"Ray has crossed resonance")
@@ -203,18 +204,26 @@ def handle_terminating_event(
         log.info(f"Ray has crossed resonance 2")
         return tau_events["cross_resonance2"][0]
     
+    if detected("leave_plasma") and detected("leave_LCFS"):
+        log.info(f"Ray has left plasma")
+        return tau_events["leave_plasma"][0]
+    
     if not detected("leave_plasma") and detected("leave_LCFS"):
         log.info(f"Ray has left LCFS")
         return tau_events["leave_LCFS"][0]
     
-    if detected("leave_plasma") and detected("leave_LCFS"):
-        K0_at_LCFS = ray_parameters_events[0][2]
-        if K0_at_LCFS < 0:
-            log.info(f"Ray has gone through the plasma and LCFS, and exited from the outboard side. Terminating the propagation at the LCFS")
-            return tau_events["leave_LCFS"][0]
-        
-        log.info(f"Ray deflection is sufficiently large, so the ray has gone through the plasma and LCFS, but did not exit from the outboard side. Terminating at entry poloidal flux")
+    if detected("leave_plasma") and not detected("leave_LCFS"):
+        log.info(f"Ray has left plasma")
         return tau_events["leave_plasma"][0]
+    
+    # if detected("leave_plasma") and detected("leave_LCFS"):
+    #     K0_at_LCFS = ray_parameters_events[0][2]
+    #     if K0_at_LCFS < 0:
+    #         log.info(f"Ray has gone through the plasma and LCFS, and exited from the outboard side. Terminating the propagation at the LCFS")
+    #         return tau_events["leave_LCFS"][0]
+        
+    #     log.info(f"Ray deflection is sufficiently large, so the ray has gone through the plasma and LCFS, but did not exit from the outboard side. Terminating at entry poloidal flux")
+    #     return tau_events["leave_plasma"][0]
 
     log.warning(f"""Ray has left the simulation region without leaving the LCFS
 
@@ -245,17 +254,17 @@ def d_ray_parameters_d_tau(tau: FloatArray, ray_parameters: FloatArray, hamilton
 
 
 
-def propagate_ray(
+def ray_tracing(
     q_initial: FloatArray,
     K_initial: FloatArray,
     poloidal_flux_enter: float,
     hamiltonian: Hamiltonian,
-    ray_tracing: bool,
+    ray_tracing_flag: bool,
     rtol: float,
     atol: float,
     len_tau: int,
     tau_max: float = 1e5,
-) -> Tuple[FloatArray, Union[float, FloatArray]]:
+) -> Tuple[VALID_SOLVER_STATUS, int, float, FloatArray, Union[float, FloatArray]]:
     
     """Propagates a ray, given an initial position `q` and wavevector `K`, using
     `scipy.integrate.solve_ivp` until any of these terminating conditions are
@@ -270,11 +279,11 @@ def propagate_ray(
         (a) ray leaves the LCFS (i.e. when the ray reaches `poloidal_flux` == 1.0); or
         (b) dK/dtau = 0 (i.e. a cut-off is reached).
 
-    If `ray_tracing == True`, then this returns a 2-tuple where the first item is an
+    If `ray_tracing_flag == True`, then this returns a 2-tuple where the first item is an
     array of equally-spaced `tau` points, and the second is an array of shape `(6, len(tau_points))`
     corresponding to `q0`, `q1`, `q2`, `K0`, `K1`, `K2` in the same order as the first.
     
-    If `ray_tracing == False`, it returns a 2-tuple with the same first item, but the second
+    If `ray_tracing_flag == False`, it returns a 2-tuple with the same first item, but the second
     item is the `tau` value when the ray encounters a terminating condition.
     """
     
@@ -338,9 +347,26 @@ def propagate_ray(
     
     # For ray-tracing runs, return `tau` and `result` (containing `q`, `K`)
     # Otherwise return `tau_terminating_event` and `tau_arr_resampled` (since the beam solver calculates everything again) 
-    if ray_tracing: return tau_arr_resampled, soln_interp(tau_arr_resampled)
-    else:           return tau_arr_resampled, tau_terminating_event
-    
+    if ray_tracing_flag: return solver_ray_output.status, solver_ray_output.nfev, duration_ray_tracing, tau_arr_resampled, soln_interp(tau_arr_resampled)
+    else:                return solver_ray_output.status, solver_ray_output.nfev, duration_ray_tracing, tau_arr_resampled, tau_terminating_event
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     # TO REMOVE -- old implementation, keeping here for convenience
     # if (len(tau_events["cross_resonance"]) == 0 and
     #     len(tau_events["cross_resonance2"]) == 0):

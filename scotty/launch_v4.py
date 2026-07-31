@@ -34,6 +34,8 @@ def find_plasma_entry_position(
     poloidal_flux_enter: float,
     boundary_adjust: float = 1e-6,
 ) -> FloatArray:
+
+    r"""Returns `q_initial` in cartesian or cylindrical"""
     
     log.info(f"Finding plasma entry position")
 
@@ -50,9 +52,11 @@ def find_plasma_entry_position(
     # coordinates, and then depending on the geometry we convert accordingly.
 
     if isinstance(field, MagneticField_Cylindrical):
+        cart = False
         q_launch_cartesian = find_q_labframe_cyl_to_cart(q_launch)
         max_dist = max(q_launch_cartesian)
     else: # isinstance(field, MagneticField_Cartesian):
+        cart = True
         q_launch_cartesian = q_launch
         max_dist = max(q_launch_cartesian)
 
@@ -107,7 +111,7 @@ def find_plasma_entry_position(
         minimum = minimize_scalar(_poloidal_flux_difference_along_ray_line_wrapper)
         q_closest_approach_cartesian = _ray_line_wrapper(minimum)
         q_closest_approach_cylindrical = find_q_labframe_cart_to_cyl(q_closest_approach_cartesian)
-        _str = f"[R,zeta,Z] = {arr2str(q_closest_approach_cylindrical)}" if isinstance(field, MagneticField_Cylindrical) else f"[X,Y,Z] = {arr2str(q_closest_approach_cartesian)}"
+        _str = f"[X,Y,Z] = {arr2str(q_closest_approach_cartesian)}" if cart else f"[R,zeta,Z] = {arr2str(q_closest_approach_cylindrical)}"
         raise RuntimeError(f"The ray does not intersect the plasma. Closest point is at {_str},"
                            f"distance in poloidal flux to boundary = {minimum.fun}") # type: ignore
     
@@ -132,7 +136,7 @@ def find_plasma_entry_position(
 
     # Final conversions back to the proper geometry
     log.debug(f"Plasma entry position, `q_initial_cartesian`, is [X,Y,Z] = {arr2str(q_initial_cartesian)}")
-    return find_q_labframe_cart_to_cyl(q_initial_cartesian) if isinstance(field, MagneticField_Cylindrical) else q_initial_cartesian
+    return q_initial_cartesian if cart else find_q_labframe_cart_to_cyl(q_initial_cartesian)
 
 
 
@@ -187,7 +191,7 @@ def find_mode_index_and_ehat(mode_flag: VALID_LAUNCH_MODE_FLAGS, H_Cardanos: Flo
     #   (ii)  If there is one solution, just return that
     #   (iii) If there is more than 1 solution and the user specifies `mode_flag` = 1 or -1,
     # then we have no way of knowing what exactly the user wants (i.e. we don't know
-    # if the O-mode or X-mode solution is wanted), so raise an error
+    # if the O-mode or X-mode solution is wanted), so warn the user and choose the smallest solution
     #   Otherwise, check which mode index yields the desired mode
 
     if soln_idxs.shape in [(0,), (3,)]:
@@ -199,8 +203,11 @@ def find_mode_index_and_ehat(mode_flag: VALID_LAUNCH_MODE_FLAGS, H_Cardanos: Flo
         ehat = soln_ehats
     
     elif soln_idxs.shape == (2,) and mode_flag in [1, -1]:
-        raise RuntimeError(f"Specific mode to be used not specified (`mode_flag` = {mode_flag}) and unable to determine which mode indices correspond to O- and X-mode")
-    
+        log.warning(f"Specific mode to be used not specified (`mode_flag` = {mode_flag}) and unable to determine which mode indices correspond to O- and X-mode. Perhaps `tol_H` may be too large, so try selecting a deeper `poloidal_flux_enter` or use `boundary_flag` = `continuous` instead ")
+        mode_idx = np.argmin(np.abs(H_Cardanos))
+        H = H_Cardanos[mode_idx]
+        ehat = ehats[mode_idx]
+
     else: # soln_idxs.shape == (2,) and mode_flag in ["O", "X"]:
         H0, H1 = H_Cardanos[soln_idxs]
         e0, e1 = soln_ehats.T # because soln_ehats.shape == (3,2)
@@ -221,6 +228,7 @@ def find_mode_index_and_ehat(mode_flag: VALID_LAUNCH_MODE_FLAGS, H_Cardanos: Flo
 
 
 def find_plasma_entry_parameters(
+    ray_tracing_flag: bool,
     launch_flag: VALID_LAUNCH_FLAGS,
     boundary_flag: VALID_BOUNDARY_FLAGS,
     mode_flag_launch: VALID_LAUNCH_MODE_FLAGS,
@@ -278,6 +286,8 @@ def find_plasma_entry_parameters(
         q_launch_cartesian  = q_launch
         q_initial_cartesian = q_initial
     
+    distance_from_launch_to_entry = cast(float, np.linalg.norm(q_launch_cartesian - q_initial_cartesian))
+    
     # If `launch_flag` = "plasma", that means we start propagation
     # from inside the plasma, so we can skip the plasma entry calculations
     # TODO -- TO REMOVE -- this isnt fully implemented, because we dont
@@ -312,56 +322,63 @@ def find_plasma_entry_parameters(
         K0 = cast(float, K0) # to stop the typechecker from complaining
         
         # Find K_launch
+        # In truth, K_launch in cylindrical is the same as in cartesian, but
+        # note that K in Scotty does not represent the true toroidal component
+        # but the toroidal mode number i.e. K_zeta_true = K_launch[1] / q_R
         K_launch_cartesian = -K0 * np.array([np.cos(poloidal_launch_angle) * np.cos(toroidal_launch_angle),
                                              np.cos(poloidal_launch_angle) * np.sin(toroidal_launch_angle),
                                              np.sin(poloidal_launch_angle)])
         K_launch = K_launch_cartesian
         
-        # Finding Psi_w_launch_beamframe_cartesian and Psi_3D_launch_beamframe_cartesian
-        # Entries on the off-diagonal = 0, because beamframe
-        # Entries on the diagonal = K_0/R + 2i/W^2, where:
-        #    R is beam radius of curvature (in metres); and
-        #    W is beam width (in metres)
-        # First row/column is y-direction; second is x-direction; third is g-direction (beamframe)
-        # Not to be confused with X-, Y-, Z-directions (labframe)
-        diag = K0*launch_beam_curvature + 2j/launch_beam_width**2
-        Psi_w_launch_beamframe_cartesian = diag * np.eye(2)
-        Psi_3D_launch_beamframe_cartesian = make_array_3x3(Psi_w_launch_beamframe_cartesian)
+        if ray_tracing_flag:
+            Psi_3D_launch_labframe = None
+            Psi_3D_entry_labframe = None
+            Psi_3D_entry_labframe_cartesian = None
+        else:
+            # Finding Psi_w_launch_beamframe_cartesian and Psi_3D_launch_beamframe_cartesian
+            # Entries on the off-diagonal = 0, because beamframe
+            # Entries on the diagonal = K_0/R + 2i/W^2, where:
+            #    R is beam radius of curvature (in metres); and
+            #    W is beam width (in metres)
+            # First row/column is y-direction; second is x-direction; third is g-direction (beamframe)
+            # Not to be confused with X-, Y-, Z-directions (labframe)
+            diag = K0*launch_beam_curvature + 2j/launch_beam_width**2
+            Psi_w_launch_beamframe_cartesian = diag * np.eye(2)
+            Psi_3D_launch_beamframe_cartesian = make_array_3x3(Psi_w_launch_beamframe_cartesian)
 
-        # Setting up the rotation matrices, so that we can convert
-        # Psi_3D_launch_beamframe_cartesian into Psi_3D_launch_labframe_cartesian
-        poloidal_rotation_angle = poloidal_launch_angle + np.pi/2
-        toroidal_rotation_angle = toroidal_launch_angle
-        sin_pol, cos_pol = np.sin(poloidal_rotation_angle), np.cos(poloidal_rotation_angle)
-        sin_tor, cos_tor = np.sin(toroidal_rotation_angle), np.cos(toroidal_rotation_angle)
-        poloidal_rotation_matrix = np.array([[ cos_pol,       0, sin_pol],
-                                             [       0,       1,       0],
-                                             [-sin_pol,       0, cos_pol]])
-        toroidal_rotation_matrix = np.array([[ cos_tor, sin_tor,       0],
-                                             [-sin_tor, cos_tor,       0],
-                                             [       0,       0,       1]])
-        rotation_matrix = np.matmul(poloidal_rotation_matrix, toroidal_rotation_matrix)
-        rotation_matrix_inverse = np.transpose(rotation_matrix)
+            # Setting up the rotation matrices, so that we can convert
+            # Psi_3D_launch_beamframe_cartesian into Psi_3D_launch_labframe_cartesian
+            poloidal_rotation_angle = poloidal_launch_angle + np.pi/2
+            toroidal_rotation_angle = toroidal_launch_angle
+            sin_pol, cos_pol = np.sin(poloidal_rotation_angle), np.cos(poloidal_rotation_angle)
+            sin_tor, cos_tor = np.sin(toroidal_rotation_angle), np.cos(toroidal_rotation_angle)
+            poloidal_rotation_matrix = np.array([[ cos_pol,       0, sin_pol],
+                                                [       0,       1,       0],
+                                                [-sin_pol,       0, cos_pol]])
+            toroidal_rotation_matrix = np.array([[ cos_tor, sin_tor,       0],
+                                                [-sin_tor, cos_tor,       0],
+                                                [       0,       0,       1]])
+            rotation_matrix = np.matmul(poloidal_rotation_matrix, toroidal_rotation_matrix)
+            rotation_matrix_inverse = np.transpose(rotation_matrix)
 
-        # Finding Psi_3D_launch_labframe_cartesian using:
-        # Psi_labframe = R^-1 * Psi_beamframe * R, where
-        #    R is the rotation matrix to convert a vector from beamframe to labframe
-        Psi_3D_launch_labframe_cartesian = np.matmul(rotation_matrix_inverse, np.matmul(Psi_3D_launch_beamframe_cartesian, rotation_matrix))
-        Psi_3D_launch_labframe = find_Psi_3D_labframe_cart_to_cyl(Psi_3D_launch_labframe_cartesian, K_launch_cartesian, q_launch_cartesian)
+            # Finding Psi_3D_launch_labframe_cartesian using:
+            # Psi_labframe = R^-1 * Psi_beamframe * R, where
+            #    R is the rotation matrix to convert a vector from beamframe to labframe
+            Psi_3D_launch_labframe_cartesian = np.matmul(rotation_matrix_inverse, np.matmul(Psi_3D_launch_beamframe_cartesian, rotation_matrix))
+            Psi_3D_launch_labframe = find_Psi_3D_labframe_cart_to_cyl(Psi_3D_launch_labframe_cartesian, K_launch_cartesian, q_launch_cartesian)
 
-        # Now we propagate the beam until it reaches the plasma boundary,
-        # and then apply either the continuous or discontinuous or no
-        # boundary conditions to find K_entry and Psi_entry when the
-        # beam enters the plasma
-        Psi_w_inverse_launch_beamframe_cartesian = find_inverse_2D(Psi_w_launch_beamframe_cartesian)
-        distance_from_launch_to_entry = cast(float, np.linalg.norm(q_launch_cartesian - q_initial_cartesian))
-        Psi_w_inverse_entry_beamframe_cartesian = distance_from_launch_to_entry / K0 * np.eye(2) + Psi_w_inverse_launch_beamframe_cartesian
+            # Now we propagate the beam until it reaches the plasma boundary,
+            # and then apply either the continuous or discontinuous or no
+            # boundary conditions to find K_entry and Psi_entry when the
+            # beam enters the plasma
+            Psi_w_inverse_launch_beamframe_cartesian = find_inverse_2D(Psi_w_launch_beamframe_cartesian)
+            Psi_w_inverse_entry_beamframe_cartesian = distance_from_launch_to_entry / K0 * np.eye(2) + Psi_w_inverse_launch_beamframe_cartesian
 
-        # 'Psi_3D_entry' is still in vacuum, so the components of Psi in the
-        # beam frame along g are all zero (since grad_H = 0)
-        Psi_3D_entry_beamframe_cartesian = make_array_3x3(find_inverse_2D(Psi_w_inverse_entry_beamframe_cartesian))
-        Psi_3D_entry_labframe_cartesian = np.matmul(rotation_matrix_inverse, np.matmul(Psi_3D_entry_beamframe_cartesian, rotation_matrix))
-        Psi_3D_entry_labframe = find_Psi_3D_labframe_cart_to_cyl(Psi_3D_entry_labframe_cartesian, K_launch_cartesian, q_initial_cartesian)
+            # 'Psi_3D_entry' is still in vacuum, so the components of Psi in the
+            # beam frame along g are all zero (since grad_H = 0)
+            Psi_3D_entry_beamframe_cartesian = make_array_3x3(find_inverse_2D(Psi_w_inverse_entry_beamframe_cartesian))
+            Psi_3D_entry_labframe_cartesian = np.matmul(rotation_matrix_inverse, np.matmul(Psi_3D_entry_beamframe_cartesian, rotation_matrix))
+            Psi_3D_entry_labframe = find_Psi_3D_labframe_cart_to_cyl(Psi_3D_entry_labframe_cartesian, K_launch_cartesian, q_initial_cartesian)
 
         # If `boundary_flag` is None, then we assume that the electron density
         # profile is both continuous and differentiable at the plasma boundary,
@@ -411,7 +428,7 @@ def find_plasma_entry_parameters(
             # quantities for those. If mode_flag is "O" or "X", then
             # we calculate the quantities for both 1 and -1. After
             # obtaining the quantities corresponding to H_booker = 0,
-            # we calculate H_Cardano and find the polarisation vector
+            # we calculate H_Cardano and find the polarisation vectorl
             # corresponding to H_booker = H_Cardano = 0 to see if it's
             # O- or X-mode. We do this, literally, by comparing the
             # e_hats with the O-mode polarisation vector; specifically,
@@ -433,18 +450,15 @@ def find_plasma_entry_parameters(
 
             if mode_flag_launch in [1, "O", "X"] and hamiltonian_pos1 is not None:
                 log.debug(f"`mode_flag_launch` is {mode_flag_launch}. Applying boundary conditions for Hamiltonian with `mode_flag` = 1")
-                # K_initial_cartesian_pos1, Psi_3D_initial_labframe_cartesian_pos1 =
                 K_initial_pos1, Psi_3D_initial_labframe_pos1 = apply_boundary_conditions(
+                    ray_tracing_flag = ray_tracing_flag,
                     boundary_flag = boundary_flag,
                     q_vacuum_entry_cartesian = q_initial_cartesian,
                     K_vacuum_entry_cartesian = K_launch_cartesian,
-                    Psi_3D_vacuum_entry_labframe_cartesian = Psi_3D_entry_labframe_cartesian,
+                    Psi_3D_vacuum_entry_labframe = Psi_3D_entry_labframe,
                     field = field,
                     hamiltonian = hamiltonian_pos1)
                 
-                # K_magnitude_initial_cartesian_pos1 = np.linalg.norm(K_initial_cartesian_pos1)
-                # K_hat_initial_cartesian_pos1 = K_initial_cartesian_pos1 / K_magnitude_initial_cartesian_pos1
-                # theta_m_pos1 = np.arcsin(np.dot(b_hat, K_hat_initial_cartesian_pos1))
                 K_magnitude_initial_pos1 = find_K_magnitude(cart, *K_initial_pos1, q_initial[0]) # type: ignore
                 K_hat_initial_pos1 = K_initial_pos1 / (K_magnitude_initial_pos1 * np.array([1, 1 if cart else q_initial[0], 1]))
                 theta_m_pos1 = np.arcsin(np.dot(b_hat, K_hat_initial_pos1))
@@ -471,9 +485,9 @@ def find_plasma_entry_parameters(
         #   - K_initial_{"cartesian" if cart else "cylindrical"} = {arr2str(K_initial_pos1)}
         #
         #   - Psi_3D_initial_labframe_{"cartesian" if cart else "cylindrical"} =
-        #        [{arr2str(Psi_3D_initial_labframe_pos1[0])},
-        #         {arr2str(Psi_3D_initial_labframe_pos1[1])},
-        #         {arr2str(Psi_3D_initial_labframe_pos1[2])}]
+        #        [{Psi_3D_initial_labframe_pos1 if Psi_3D_initial_labframe_pos1 is None else arr2str(Psi_3D_initial_labframe_pos1[0])},
+        #         {Psi_3D_initial_labframe_pos1 if Psi_3D_initial_labframe_pos1 is None else arr2str(Psi_3D_initial_labframe_pos1[1])},
+        #         {Psi_3D_initial_labframe_pos1 if Psi_3D_initial_labframe_pos1 is None else arr2str(Psi_3D_initial_labframe_pos1[2])}]
         #
         #   - theta_m (in radians) = {theta_m_pos1}
         #   - theta_m (in degrees) = {np.rad2deg(theta_m_pos1)}
@@ -505,18 +519,15 @@ def find_plasma_entry_parameters(
 
             if mode_flag_launch in [-1, "O", "X"] and hamiltonian_neg1 is not None:
                 log.debug(f"`mode_flag_launch` is {mode_flag_launch}. Applying boundary conditions for Hamiltonian with `mode_flag` = -1")
-                # K_initial_cartesian_neg1, Psi_3D_initial_labframe_cartesian_neg1 =
                 K_initial_neg1, Psi_3D_initial_labframe_neg1 = apply_boundary_conditions(
+                    ray_tracing_flag = ray_tracing_flag,
                     boundary_flag = boundary_flag,
                     q_vacuum_entry_cartesian = q_initial_cartesian,
                     K_vacuum_entry_cartesian = K_launch_cartesian,
-                    Psi_3D_vacuum_entry_labframe_cartesian = Psi_3D_entry_labframe_cartesian,
+                    Psi_3D_vacuum_entry_labframe = Psi_3D_entry_labframe,
                     field = field,
                     hamiltonian = hamiltonian_neg1)
                 
-                # K_magnitude_initial_cartesian_neg1 = np.linalg.norm(K_initial_cartesian_neg1)
-                # K_hat_initial_cartesian_neg1 = K_initial_cartesian_neg1 / K_magnitude_initial_cartesian_neg1
-                # theta_m_neg1 = np.arcsin(np.dot(b_hat, K_hat_initial_cartesian_neg1))
                 K_magnitude_initial_neg1 = find_K_magnitude(cart, *K_initial_neg1, q_initial[0]) # type: ignore
                 K_hat_initial_neg1 = K_initial_neg1 / (K_magnitude_initial_neg1 * np.array([1, 1 if cart else q_initial[0], 1]))
                 theta_m_neg1 = np.arcsin(np.dot(b_hat, K_hat_initial_neg1))
@@ -543,9 +554,9 @@ def find_plasma_entry_parameters(
         #   - K_initial_{"cartesian" if cart else "cylindrical"} = {arr2str(K_initial_neg1)}
         #
         #   - Psi_3D_initial_labframe_{"cartesian" if cart else "cylindrical"} =
-        #        [{arr2str(Psi_3D_initial_labframe_neg1[0])},
-        #         {arr2str(Psi_3D_initial_labframe_neg1[1])},
-        #         {arr2str(Psi_3D_initial_labframe_neg1[2])}]
+        #        [{Psi_3D_initial_labframe_neg1 if Psi_3D_initial_labframe_neg1 is None else arr2str(Psi_3D_initial_labframe_neg1[0])},
+        #         {Psi_3D_initial_labframe_neg1 if Psi_3D_initial_labframe_neg1 is None else arr2str(Psi_3D_initial_labframe_neg1[1])},
+        #         {Psi_3D_initial_labframe_neg1 if Psi_3D_initial_labframe_neg1 is None else arr2str(Psi_3D_initial_labframe_neg1[2])}]
         #
         #   - theta_m (in radians) = {theta_m_neg1}
         #   - theta_m (in degrees) = {np.rad2deg(theta_m_neg1)}
@@ -567,8 +578,8 @@ def find_plasma_entry_parameters(
         """)
                 
                 solns.append({
-                    "K_initial_cartesian": K_initial_neg1,
-                    "Psi_3D_initial_cartesian": Psi_3D_initial_labframe_neg1,
+                    "K_initial": K_initial_neg1,
+                    "Psi_3D_initial": Psi_3D_initial_labframe_neg1,
                     "H_Cardano_initial": H_Cardano_neg1,
                     "e_hat_initial": e_hat_neg1,
                     "mode_flag": hamiltonian_neg1.mode_flag, # sanity check: this should be `-1`
@@ -608,10 +619,10 @@ def find_plasma_entry_parameters(
         #
         # Calculated plasma entry parameters for:
         #   - O-mode {"(selected)" if sel == "O" else ""}:
-        #        - K_cartesian = {O_mode.get("K_initial_cartesian")}
+        #        - K_cartesian = {O_mode.get("K_initial")}
         #
         #        - Psi_3D_cartesian =
-        #              {O_mode.get("Psi_3D_initial_cartesian")}
+        #              {O_mode.get("Psi_3D_initial")}
         #
         #        - H_Cardano = {O_mode.get("H_Cardano")}
         #
@@ -622,10 +633,10 @@ def find_plasma_entry_parameters(
         #        - mode_index = {O_mode.get("mode_index")}
         #
         #   - X-mode {"(selected)" if sel == "X" else ""}:
-        #        - K_cartesian = {X_mode.get("K_initial_cartesian")}
+        #        - K_cartesian = {X_mode.get("K_initial")}
         #
         #        - Psi_3D_cartesian =
-        #              {X_mode.get("Psi_3D_initial_cartesian")}
+        #              {X_mode.get("Psi_3D_initial")}
         #
         #        - H_Cardano = {X_mode.get("H_Cardano")}
         #
@@ -637,13 +648,6 @@ def find_plasma_entry_parameters(
         #
         ##################################################
         """)
-            
-            # (K_initial_cartesian,
-            #  Psi_3D_initial_labframe_cartesian,
-            #  H_Cardano_initial,
-            #  e_hat_initial,
-            #  mode_flag_initial,
-            #  mode_index) = toreturn.values()
 
             (K_initial,
              Psi_3D_initial_labframe,

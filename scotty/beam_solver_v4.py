@@ -1,6 +1,7 @@
 import logging
 import numpy as np
 from scipy.integrate import solve_ivp
+from scotty.checks_v4 import VALID_SOLVER_STATUS
 from scotty.geometry_v4 import MagneticField_Cartesian
 from scotty.hamiltonian_v4 import Hamiltonian, hessians
 from scotty.logger_v4 import timer
@@ -18,6 +19,7 @@ def pack_beam_parameters(q: FloatArray, K: FloatArray, Psi: ComplexFloatArray) -
     
     log.trace(f"Packing ray and beam parameters")
 
+    # Validity checks
     qshape = q.shape
     Kshape = K.shape
     Psishape = Psi.shape
@@ -91,7 +93,7 @@ def d_beam_parameters_d_tau(tau: FloatArray, beam_parameters: FloatArray, hamilt
 
 
 
-def evolve_beam(
+def beam_tracing(
     tau_leave: float,
     tau_points: FloatArray,
     q_initial: FloatArray,
@@ -100,11 +102,10 @@ def evolve_beam(
     hamiltonian: Hamiltonian,
     rtol: float,
     atol: float,
-) -> Tuple[int, FloatArray, FloatArray, FloatArray, ComplexFloatArray]:
+) -> Tuple[VALID_SOLVER_STATUS, int, float, FloatArray, FloatArray, FloatArray, ComplexFloatArray]:
     
-    """
-    something
-    """
+    """Returns solver status (1, 0, -1), duration taken by solver, number of evaluations,
+    tau` of shape `(N,)`, `q` of shape `(3, N)`, `K` of shape `(3, N)`, `Psi` of shape `(N, 3, 3)`"""
 
     # Packing the ray and beam parameters
     beam_parameters_initial = pack_beam_parameters(q_initial, K_initial, Psi_3D_initial_labframe)
@@ -135,4 +136,4 @@ def evolve_beam(
         Time per beam evolution evaluation: {duration_beam_solver / solver_beam_output.nfev}
     """)
 
-    return solver_beam_output.status, solver_beam_output.t, *unpack_beam_parameters(solver_beam_output.y)
+    return solver_beam_output.status, solver_beam_output.nfev, duration_beam_solver, solver_beam_output.t, *unpack_beam_parameters(solver_beam_output.y)
