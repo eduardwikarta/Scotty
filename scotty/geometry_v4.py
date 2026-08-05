@@ -457,9 +457,35 @@ def create_magnetic_geometry(
     log.debug(f"Reading and creating field profile")
 
     # If the user passes an interpolated field, then just use that
-    if isinstance(find_B_method, (MagneticField_Cylindrical, MagneticField_Cartesian)):
+    if isinstance(find_B_method, (MagneticField_Cylindrical)) and geometry == "cylindrical":
         log.debug(f"Using existing field profile of type `{type(find_B_method)}` passed from `find_B_method`")
         return find_B_method
+    # elif isinstance(find_B_method, (MagneticField_Cylindrical)) and geometry == "cartesian":
+    log.debug(f"Creating a 3-D field profile from the given 2-D profile")
+    X_coords = find_B_method.R_coord
+    Y_coords = np.linspace(-0.3, 0.1, 41)
+    Z_coords = find_B_method.Z_coord
+
+    XX, YY, ZZ = np.meshgrid(X_coords, Y_coords, Z_coords, indexing="ij")
+    RR = np.sqrt(XX**2 + YY**2)
+
+    B_R = find_B_method.B_R(RR, ZZ)
+    B_T = find_B_method.B_T(RR, ZZ)
+    B_X = (B_R*XX - B_T*YY) / RR
+    B_Y = (B_R*YY + B_T*XX) / RR
+    B_Z = find_B_method.B_Z(RR, ZZ)
+    polflux = find_B_method.poloidal_flux(RR, ZZ)
+
+    # (field,
+    #     duration_field_interpolation)
+    field = InterpolatedField_Cartesian(
+                                        X_coords, Y_coords, Z_coords,
+                                        B_X, B_Y, B_Z, polflux,
+                                        interp_order_str)
+    
+    # log.debug(f"Converting the field profile took {duration_field_interpolation} s")
+
+    return field
     
     # Otherwise, check what it should be and interpolate accordingly
     find_B_method = find_B_method.lower()

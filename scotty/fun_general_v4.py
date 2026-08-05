@@ -106,9 +106,11 @@ def find_Psi_3D_labframe_cart_to_cyl(Psi_3D_labframe_cartesian: ComplexFloatArra
     then K_lab_cart and q_lab_cart must be (3, N)). Note that the shape of Psi_3D_labframe_cartesian is different from the shapes
     of K_lab_cart and q_lab_cart because of the way we evolve the beam
     """
+    q_X, q_Y, _ = q_lab_cart
     q_R, q_zeta, q_Z = find_q_labframe_cart_to_cyl(q_lab_cart)
     sin_zeta = np.sin(q_zeta)
     cos_zeta = np.cos(q_zeta)
+    K_X, K_Y, _ = K_lab_cart
     K_R, K_zeta, K_Z = find_K_labframe_cart_to_cyl(K_lab_cart, q_lab_cart)
 
     if Psi_3D_labframe_cartesian.ndim == 2: # A single matrix of Psi
@@ -132,7 +134,7 @@ def find_Psi_3D_labframe_cart_to_cyl(Psi_3D_labframe_cartesian: ComplexFloatArra
     Psi_cyl[:, 0, 0] = Psi_XX * cos_zeta**2 + 2 * Psi_XY * sin_zeta * cos_zeta + Psi_YY * sin_zeta**2
     Psi_cyl[:, 0, 1] = (-Psi_XX * sin_zeta * cos_zeta + Psi_XY * (cos_zeta**2 - sin_zeta**2) + Psi_YY * sin_zeta * cos_zeta) * q_R + K_zeta / q_R
     Psi_cyl[:, 0, 2] = Psi_XZ * cos_zeta + Psi_YZ * sin_zeta
-    Psi_cyl[:, 1, 1] = (Psi_XX * sin_zeta**2 - 2 * Psi_XY * sin_zeta * cos_zeta + Psi_YY * cos_zeta**2) * q_R**2 - K_R * q_R
+    Psi_cyl[:, 1, 1] = (Psi_XX * sin_zeta**2 - 2 * Psi_XY * sin_zeta * cos_zeta + Psi_YY * cos_zeta**2) * q_R**2 - K_R * q_R 
     Psi_cyl[:, 1, 2] = (-Psi_XZ * sin_zeta + Psi_YZ * cos_zeta) * q_R
     Psi_cyl[:, 2, 2] = Psi_ZZ
     Psi_cyl[:, 1, 0] = Psi_cyl[:, 0, 1]
@@ -195,7 +197,19 @@ def find_Psi_3D_labframe_cyl_to_cart(Psi_3D_labframe_cylindrical: ComplexFloatAr
 
     rotation_matrix_xi_inverse = np.moveaxis(np.swapaxes(rotation_matrix_xi, 0, 1), -1, 0) # same moveaxis as above
 
-    Psi_cart = np.matmul(np.matmul(rotation_matrix_xi_inverse, Psi_temp), rotation_matrix_xi)
+    Psi_cart = np.matmul(np.matmul(rotation_matrix_xi, Psi_temp), rotation_matrix_xi_inverse)
+
+    # TO REMOVE manually solved via Gaussian elimination
+    # Psi_cart = np.zeros([N,3,3], dtype="complex128")
+    # Psi_cart[:, 0, 0] = 2*(K_zeta + Psi_zetazeta) / (q_R**2 * (1-np.cos(2*q_zeta)))
+    # Psi_cart[:, 0, 1] = (-K_zeta + q_R*Psi_Rzeta) / (q_R**2 * np.cos(2*q_zeta))
+    # Psi_cart[:, 0, 2] = (-Psi_zetaZ) / (q_R*np.sin(q_zeta))
+    # Psi_cart[:, 1, 1] = (-2*Psi_RR) / (np.cos(2*q_zeta)-1)
+    # Psi_cart[:, 1, 2] = Psi_RZ / np.sin(q_zeta)
+    # Psi_cart[:, 2, 2] = Psi_ZZ
+    # Psi_cart[:, 1, 0] = Psi_cart[:, 0, 1]
+    # Psi_cart[:, 2, 0] = Psi_cart[:, 0, 2]
+    # Psi_cart[:, 2, 1] = Psi_cart[:, 1, 2]
 
     return Psi_cart[0] if squeeze else Psi_cart
 
@@ -547,3 +561,23 @@ def find_mode_index_and_ehat(mode_flag: VALID_LAUNCH_MODE_FLAGS, H_Cardanos: Flo
         ehat = soln_ehats[idx]
     
     return np.squeeze(mode_idx), np.squeeze(H), np.squeeze(ehat)
+
+
+
+
+
+# def find_beam_widths_curvs(
+#     Psi_w, K_vec, g_hat):
+    
+#     Re_Psi_w = np.real(Psi_w)
+#     Re_Psi_w_eigvals = np.linalg.eigvalsh(Re_Psi_w)
+#     K_mag = np.linalg.norm(K_vec, axis=1)
+#     K_g_mag = np.sum(K_vec * g_hat, axis=1)
+#     curvs = np.squeeze((K_g_mag**2 / K_mag**3)[:, np.newaxis] * Re_Psi_w_eigvals)
+
+#     Im_Psi_w = np.imag(Psi_w)
+#     Im_Psi_w_eigvals = np.linalg.eigvalsh(Im_Psi_w)
+#     widths = np.squeeze(np.sqrt( np.full(Im_Psi_w_eigvals.shape, 2) / Im_Psi_w_eigvals ))
+
+#     if curvs.ndim == 1: return curvs[0], curvs[1], widths[0], widths[1]
+#     else:               return curvs[:, 0], curvs[:, 1], widths[:, 0], widths[:, 1]

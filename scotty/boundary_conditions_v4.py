@@ -421,11 +421,6 @@ def find_Psi_3D_plasma(
         Psi_YZ_v = Psi_3D_vacuum_labframe[1,2]
         Psi_ZZ_v = Psi_3D_vacuum_labframe[2,2]
 
-        print()
-        print("bc_v4:425, Psi_3D_vacuum_labframe")
-        print(Psi_3D_vacuum_labframe)
-        print()
-
         # Now we set up the interface matrix using 6 linearly
         # independent equations to obtain a relation between the
         # entries of "Psi_v" and "Psi_p". Note that this matrix
@@ -560,6 +555,37 @@ def find_Psi_3D_plasma(
         #
         ##################################################
         """) # pyright: ignore[reportPossiblyUnbound]
+
+    from scotty.fun_general_v4 import find_Psi_3D_labframe_cart_to_cyl
+    Psi_3D_vacuum_labframe_cylindrical = find_Psi_3D_labframe_cart_to_cyl(Psi_3D_vacuum_labframe, K_vacuum, q_entry)
+    Psi_3D_plasma_labframe_cylindrical = find_Psi_3D_labframe_cart_to_cyl(Psi_3D_plasma_labframe, K_plasma, q_entry)
+    
+    log.warning(f"""
+
+
+
+Psi_3D_vacuum_labframe cartesian
+{Psi_3D_vacuum_labframe[0]}
+{Psi_3D_vacuum_labframe[1]}
+{Psi_3D_vacuum_labframe[2]}
+
+Psi_3D_vacuum_labframe_cylindrical
+{Psi_3D_vacuum_labframe_cylindrical[0]}
+{Psi_3D_vacuum_labframe_cylindrical[1]}
+{Psi_3D_vacuum_labframe_cylindrical[2]}
+
+Psi_3D_plasma_labframe cartesian
+{Psi_3D_plasma_labframe[0]}
+{Psi_3D_plasma_labframe[1]}
+{Psi_3D_plasma_labframe[2]}
+
+Psi_3D_plasma_labframe_cylindrical
+{Psi_3D_plasma_labframe_cylindrical[0]}
+{Psi_3D_plasma_labframe_cylindrical[1]}
+{Psi_3D_plasma_labframe_cylindrical[2]}
+
+
+""")
 
     return Psi_3D_plasma_labframe
 

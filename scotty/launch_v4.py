@@ -195,7 +195,12 @@ def find_mode_index_and_ehat(mode_flag: VALID_LAUNCH_MODE_FLAGS, H_Cardanos: Flo
     #   Otherwise, check which mode index yields the desired mode
 
     if soln_idxs.shape in [(0,), (3,)]:
-        raise RuntimeError(f"Unable to check which mode index corresponds to O- and X-mode. Found {soln_idxs.shape} solutions! Check that `poloidal_flux_enter` is not too deep in the plasma")
+        log.warning(f"Possible wrong choice in mode index corresponding to O- and X-mode. Found {soln_idxs.shape} solutions (H = {H_Cardanos})! Check that `poloidal_flux_enter` is not too deep in the plasma")
+        log.warning(f"Selecting min(H) as the solution")
+        mode_idx = np.argmin(np.abs(H_Cardanos))
+        H = H_Cardanos[mode_idx]
+        ehat = ehats[mode_idx]
+        # raise RuntimeError(f"Unable to check which mode index corresponds to O- and X-mode. Found {soln_idxs.shape} solutions (H = {H_Cardanos})! Check that `poloidal_flux_enter` is not too deep in the plasma")
     
     elif soln_idxs.shape == (1,):
         mode_idx = soln_idxs[0]
@@ -204,6 +209,7 @@ def find_mode_index_and_ehat(mode_flag: VALID_LAUNCH_MODE_FLAGS, H_Cardanos: Flo
     
     elif soln_idxs.shape == (2,) and mode_flag in [1, -1]:
         log.warning(f"Specific mode to be used not specified (`mode_flag` = {mode_flag}) and unable to determine which mode indices correspond to O- and X-mode. Perhaps `tol_H` may be too large, so try selecting a deeper `poloidal_flux_enter` or use `boundary_flag` = `continuous` instead ")
+        log.warning(f"Selecting min(H) as the solution")
         mode_idx = np.argmin(np.abs(H_Cardanos))
         H = H_Cardanos[mode_idx]
         ehat = ehats[mode_idx]
@@ -378,7 +384,7 @@ def find_plasma_entry_parameters(
             # beam frame along g are all zero (since grad_H = 0)
             Psi_3D_entry_beamframe_cartesian = make_array_3x3(find_inverse_2D(Psi_w_inverse_entry_beamframe_cartesian))
             Psi_3D_entry_labframe_cartesian = np.matmul(rotation_matrix_inverse, np.matmul(Psi_3D_entry_beamframe_cartesian, rotation_matrix))
-            Psi_3D_entry_labframe = find_Psi_3D_labframe_cart_to_cyl(Psi_3D_entry_labframe_cartesian, K_launch_cartesian, q_initial_cartesian)
+            Psi_3D_entry_labframe = Psi_3D_entry_labframe_cartesian if cart else find_Psi_3D_labframe_cart_to_cyl(Psi_3D_entry_labframe_cartesian, K_launch_cartesian, q_initial_cartesian)
 
         # If `boundary_flag` is None, then we assume that the electron density
         # profile is both continuous and differentiable at the plasma boundary,

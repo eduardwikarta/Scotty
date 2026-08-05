@@ -241,6 +241,8 @@ class Hamiltonian:
                 "dH_dKZ":    apply_stencil(("K2",), "d1_CFD2"),
             }
 
+            # log.warning(f"dH_dY = {dH["dH_dY"]}")
+
             if second_order:
                 dH.update({
                     "d2H_dX2":     apply_stencil(("q0", "q0"), "d2_FFD2"),
