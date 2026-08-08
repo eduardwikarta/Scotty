@@ -410,6 +410,10 @@ def find_Psi_3D_plasma(
         d2p_dXdZ = derivatives["d2p_dXdZ" if cart else "d2p_dRdZ"]
         d2p_dYdZ = derivatives["d2p_dYdZ" if cart else "d2p_dzetadZ"]
 
+        log.warning(
+"\n".join(f"{k}: {v}" for k, v in derivatives.items())
+)
+
         # At the plasma-vacuum boundary, we have two Psi matrices:
         # one corresponding to Psi in the vacuum (entry), and the
         # other corresponding to Psi in the plasma (initial). We
@@ -429,15 +433,29 @@ def find_Psi_3D_plasma(
         # cylindrical Scotty. However, these differences, in
         # essence, disappear when one applies row operations
         # (like partial Gaussian elimination)
+        dp_dY = 0
         interface_matrix = np.array([
             [dp_dY**2, -2*dp_dX*dp_dY,  0,                       dp_dX**2,  0,                       0                 ],
             [dp_dZ**2,  0,             -2*dp_dX*dp_dZ,           0,         0,                       dp_dX**2          ],
+
             [dp_dZ**2,  2*dp_dZ**2,    -2*dp_dZ*(dp_dX + dp_dY), dp_dZ**2, -2*dp_dZ*(dp_dX + dp_dY), (dp_dX + dp_dY)**2],
+            # [dp_dZ**2,  2*dp_dZ**2,    -2*dp_dZ*(dp_dX + dp_dY), 0, -2*dp_dZ*(dp_dX + dp_dY), (dp_dX + dp_dY)**2],
+            # [0,  2*dp_dZ**2, 0, 0, -2*dp_dZ*(dp_dX), 0],
+            # [0,  -dp_dZ, 0, 0, dp_dX, 0],
             # [0,  dp_dZ, 0, 0, -dp_dX, 0], # TO REMOVE
+
             [dH_dKx,    dH_dKy,        dH_dKz,                   0,         0,                       0                 ],
             [0,         dH_dKx,        0,                        dH_dKy,    dH_dKz,                  0                 ],
             [0,         0,             dH_dKx,                   0,         dH_dKy,                  dH_dKz            ],
         ], dtype=np.float64)
+        # interface_matrix = np.array([
+        #     [dp_dY**2, -2*dp_dX*dp_dY,  0,                       dp_dX**2,  0,                       0                 ],
+        #     [dp_dZ**2,  0,             -2*dp_dX*dp_dZ,           0,         0,                       dp_dX**2          ],
+        #     [0,  -dp_dZ, 0, 0, dp_dX, 0], # TO REMOVE
+        #     [dH_dKx, dH_dKy, dH_dKz, 0, 0, 0],
+        #     [0, dH_dKx, 0, dH_dKy, dH_dKz, 0],
+        #     [0, 0, dH_dKx, 0, dH_dKy, dH_dKz],
+        # ], dtype=np.float64)
 
         log.debug(f"""
         #
@@ -476,7 +494,7 @@ def find_Psi_3D_plasma(
         else: # boundary_flag == "discontinuous"
             eta_XY  = -0.5 * (d2p_dX2*dp_dY**2 - 2*d2p_dXdY*dp_dX*dp_dY + d2p_dY2*dp_dX**2) / (dp_dX**2 + dp_dY**2)
             eta_XZ  = -0.5 * (d2p_dX2*dp_dZ**2 - 2*d2p_dXdZ*dp_dX*dp_dZ + d2p_dZ2*dp_dX**2) / (dp_dX**2 + dp_dZ**2)
-            eta_XYZ = -0.5 * (d2p_dX2*dp_dZ**2 + d2p_dY2*dp_dZ**2 + d2p_dZ2*(dp_dX + dp_dY)**2 + 2*d2p_dXdY*dp_dZ**2 - 2*d2p_dXdZ*dp_dZ*(dp_dX + dp_dY) - 2*d2p_dYdZ*dp_dZ*(dp_dX + dp_dY)) / ( dp_dX**2 + dp_dY**2 + dp_dZ**2 )
+            eta_XYZ = eta_XZ # -0.5 * (d2p_dX2*dp_dZ**2 + d2p_dY2*dp_dZ**2 + d2p_dZ2*(dp_dX + dp_dY)**2 + 2*d2p_dXdY*dp_dZ**2 - 2*d2p_dXdZ*dp_dZ*(dp_dX + dp_dY) - 2*d2p_dYdZ*dp_dZ*(dp_dX + dp_dY)) / ( dp_dX**2 + dp_dY**2 + dp_dZ**2 )
 
             log.debug(f"""
         #
@@ -486,14 +504,28 @@ def find_Psi_3D_plasma(
         #""")
 
         RHS_vector = np.array([
-            (Psi_XX_v * dp_dY**2) + (Psi_YY_v * dp_dX**2) - (2 * Psi_XY_v * dp_dX * dp_dY) + 2*(K_X_v - K_X_p)*dp_dX*eta_XY + 2*(K_Y_v - K_Y_p)*dp_dY*eta_XY,
-            (Psi_XX_v * dp_dZ**2) + (Psi_ZZ_v * dp_dX**2) - (2 * Psi_XZ_v * dp_dX * dp_dZ) + 2*(K_X_v - K_X_p)*dp_dX*eta_XZ + 2*(K_Z_v - K_Z_p)*dp_dZ*eta_XZ,
-        Psi_XX_v*dp_dZ**2 + Psi_YY_v*dp_dZ**2 + Psi_ZZ_v*(dp_dX + dp_dY)**2 + 2*Psi_XY_v*dp_dZ**2 - 2*(Psi_XZ_v + Psi_YZ_v)*dp_dZ*(dp_dX + dp_dY) + 2*(K_X_v - K_X_p)*dp_dX*eta_XYZ + 2*(K_Y_v - K_Y_p)*dp_dY*eta_XYZ + 2*(K_Z_v - K_Z_p)*dp_dZ*eta_XYZ,
+            (Psi_XX_v * dp_dY**2) + (Psi_YY_v * dp_dX**2) - (2 * Psi_XY_v * dp_dX * dp_dY) + 2*(K_X_v - K_X_p)*dp_dX*dp_dZ*eta_XY + 2*(K_Y_v - K_Y_p)*dp_dY*dp_dZ*eta_XY,
+            (Psi_XX_v * dp_dZ**2) + (Psi_ZZ_v * dp_dX**2) - (2 * Psi_XZ_v * dp_dX * dp_dZ) + 2*(K_X_v - K_X_p)*dp_dX*dp_dZ*eta_XZ + 2*(K_Z_v - K_Z_p)*dp_dZ*dp_dZ*eta_XZ,
+        # Psi_XX_v*dp_dZ**2 + Psi_YY_v*dp_dZ**2 + Psi_ZZ_v*(dp_dX + dp_dY)**2 + 2*Psi_XY_v*dp_dZ**2 - 2*(Psi_XZ_v + Psi_YZ_v)*dp_dZ*(dp_dX + dp_dY) + 2*(K_X_v - K_X_p)*dp_dX*eta_XYZ + 2*(K_Y_v - K_Y_p)*dp_dY*eta_XYZ + 2*(K_Z_v - K_Z_p)*dp_dZ*eta_XYZ,
+        
+        Psi_XX_v*dp_dZ**2 + Psi_YY_v*dp_dZ**2 + Psi_ZZ_v*(dp_dX + dp_dY)**2 + 2*Psi_XY_v*dp_dZ**2 - 2*Psi_XZ_v*dp_dZ*(dp_dX + dp_dY) - 2*Psi_YZ_v*dp_dZ*(dp_dX + dp_dY) - 2*(K_X_v - K_X_p)*(dp_dX*dp_dZ)*eta_XYZ - 2*(K_Y_v - K_Y_p)*(dp_dY*dp_dZ)*eta_XYZ - 2*(K_Z_v - K_Z_p)*(dp_dZ**2)*eta_XYZ,
+        # Psi_XX_v*dp_dZ**2 + Psi_ZZ_v*(dp_dX + dp_dY)**2 + 2*Psi_XY_v*dp_dZ**2 - 2*Psi_XZ_v*dp_dZ*(dp_dX + dp_dY) - 2*Psi_YZ_v*dp_dZ*(dp_dX + dp_dY) + 2*(K_X_v - K_X_p)*dp_dX*eta_XYZ + 2*(K_Y_v - K_Y_p)*dp_dY*eta_XYZ + 2*(K_Z_v - K_Z_p)*dp_dZ*eta_XYZ,
+        # 2*Psi_XY_v*dp_dZ**2 - 2*Psi_YZ_v*dp_dZ*(dp_dX),
+        # -Psi_XY_v*dp_dZ + Psi_YZ_v*dp_dX + 2*(K_X_v - K_X_p)*dp_dX*eta_XYZ + 2*(K_Z_v - K_Z_p)*dp_dZ*eta_XYZ,
         # Psi_XY_v*dp_dZ - Psi_YZ_v*dp_dX, # TO REMOVE
+
              -dH_dX,
              -dH_dY,
              -dH_dZ,
         ])#, dtype=complex)
+        # RHS_vector = np.array([
+        #     (Psi_XX_v * dp_dY**2) + (Psi_YY_v * dp_dX**2) - (2 * Psi_XY_v * dp_dX * dp_dY) + 2*(K_X_v - K_X_p)*dp_dX*eta_XY + 2*(K_Y_v - K_Y_p)*dp_dY*eta_XY,
+        #     (Psi_XX_v * dp_dZ**2) + (Psi_ZZ_v * dp_dX**2) - (2 * Psi_XZ_v * dp_dX * dp_dZ) + 2*(K_X_v - K_X_p)*dp_dX*eta_XZ + 2*(K_Z_v - K_Z_p)*dp_dZ*eta_XZ,
+        #     -Psi_XY_v*dp_dZ + Psi_YZ_v*dp_dX + 2*(K_X_v - K_X_p)*dp_dX*eta_XZ + 2*(K_Z_v - K_Z_p)*dp_dZ*eta_XZ,
+        #     -dH_dX,
+        #     -dH_dY,
+        #     -dH_dZ,
+        # ])
         
         # We access the first 3 items twice because they are tuples
         log.debug(f"""
@@ -563,6 +595,15 @@ def find_Psi_3D_plasma(
     log.warning(f"""
 
 
+
+K_vacuum cartesian
+{K_vacuum}
+
+K_plasma cartesian
+{K_plasma}
+
+K_plasma cylindrical / K_initial
+{find_K_labframe_cart_to_cyl(K_plasma, q_entry)}
 
 Psi_3D_vacuum_labframe cartesian
 {Psi_3D_vacuum_labframe[0]}

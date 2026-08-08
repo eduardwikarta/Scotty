@@ -462,9 +462,11 @@ def create_magnetic_geometry(
         return find_B_method
     # elif isinstance(find_B_method, (MagneticField_Cylindrical)) and geometry == "cartesian":
     log.debug(f"Creating a 3-D field profile from the given 2-D profile")
-    X_coords = find_B_method.R_coord
-    Y_coords = np.linspace(-0.3, 0.1, 41)
-    Z_coords = find_B_method.Z_coord
+    min_X, max_X = np.min(find_B_method.R_coord), np.max(find_B_method.R_coord)
+    min_Z, max_Z = np.min(find_B_method.Z_coord), np.max(find_B_method.Z_coord)
+    X_coords = find_B_method.R_coord # np.linspace(min_X, max_X, round((max_X-min_X)/0.01+1))
+    Y_coords = np.linspace(-0.5, 0.1, 61)
+    Z_coords = find_B_method.Z_coord # np.linspace(min_Z, max_Z, round((max_Z-min_Z)/0.01+1))
 
     XX, YY, ZZ = np.meshgrid(X_coords, Y_coords, Z_coords, indexing="ij")
     RR = np.sqrt(XX**2 + YY**2)
