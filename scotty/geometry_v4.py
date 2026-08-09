@@ -461,33 +461,33 @@ def create_magnetic_geometry(
         log.debug(f"Using existing field profile of type `{type(find_B_method)}` passed from `find_B_method`")
         return find_B_method
     # elif isinstance(find_B_method, (MagneticField_Cylindrical)) and geometry == "cartesian":
-    log.debug(f"Creating a 3-D field profile from the given 2-D profile")
-    min_X, max_X = np.min(find_B_method.R_coord), np.max(find_B_method.R_coord)
-    min_Z, max_Z = np.min(find_B_method.Z_coord), np.max(find_B_method.Z_coord)
-    X_coords = find_B_method.R_coord # np.linspace(min_X, max_X, round((max_X-min_X)/0.01+1))
-    Y_coords = np.linspace(-0.5, 0.1, 61)
-    Z_coords = find_B_method.Z_coord # np.linspace(min_Z, max_Z, round((max_Z-min_Z)/0.01+1))
+    # log.debug(f"Creating a 3-D field profile from the given 2-D profile")
+    # min_X, max_X = np.min(find_B_method.R_coord), np.max(find_B_method.R_coord)
+    # min_Z, max_Z = np.min(find_B_method.Z_coord), np.max(find_B_method.Z_coord)
+    # X_coords = find_B_method.R_coord # np.linspace(min_X, max_X, round((max_X-min_X)/0.01+1))
+    # Y_coords = np.linspace(-1, 1, 51)
+    # Z_coords = find_B_method.Z_coord # np.linspace(min_Z, max_Z, round((max_Z-min_Z)/0.01+1))
 
-    XX, YY, ZZ = np.meshgrid(X_coords, Y_coords, Z_coords, indexing="ij")
-    RR = np.sqrt(XX**2 + YY**2)
+    # XX, YY, ZZ = np.meshgrid(X_coords, Y_coords, Z_coords, indexing="ij")
+    # RR = np.sqrt(XX**2 + YY**2)
 
-    B_R = find_B_method.B_R(RR, ZZ)
-    B_T = find_B_method.B_T(RR, ZZ)
-    B_X = (B_R*XX - B_T*YY) / RR
-    B_Y = (B_R*YY + B_T*XX) / RR
-    B_Z = find_B_method.B_Z(RR, ZZ)
-    polflux = find_B_method.poloidal_flux(RR, ZZ)
+    # B_R = find_B_method.B_R(RR, ZZ)
+    # B_T = find_B_method.B_T(RR, ZZ)
+    # B_X = (B_R*XX - B_T*YY) / RR
+    # B_Y = (B_R*YY + B_T*XX) / RR
+    # B_Z = find_B_method.B_Z(RR, ZZ)
+    # polflux = find_B_method.poloidal_flux(RR, ZZ)
 
-    # (field,
-    #     duration_field_interpolation)
-    field = InterpolatedField_Cartesian(
-                                        X_coords, Y_coords, Z_coords,
-                                        B_X, B_Y, B_Z, polflux,
-                                        interp_order_str)
+    # # (field,
+    # #     duration_field_interpolation)
+    # field = InterpolatedField_Cartesian(
+    #                                     X_coords, Y_coords, Z_coords,
+    #                                     B_X, B_Y, B_Z, polflux,
+    #                                     interp_order_str)
     
     # log.debug(f"Converting the field profile took {duration_field_interpolation} s")
 
-    return field
+    # return field
     
     # Otherwise, check what it should be and interpolate accordingly
     find_B_method = find_B_method.lower()
