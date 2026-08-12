@@ -1,8 +1,9 @@
 import logging
+from math import isclose
+from multiprocessing.managers import ValueProxy
 import numpy as np
 from scipy import constants
-# from scotty.checks_v4 import VALID_LAUNCH_MODE_FLAGS
-VALID_LAUNCH_MODE_FLAGS = 1
+from scotty.checks_v4 import VALID_LAUNCH_MODE_FLAGS
 from scotty.logger_v4 import arr2str
 from scotty.typing import ArrayLike, Array, FloatArray, ComplexFloatArray
 from typing import Callable, Union, Tuple, Optional, List
@@ -16,15 +17,51 @@ log = logging.getLogger(__name__)
 ##################################################
 
 def freq_GHz_to_angular_frequency(freq_GHz: float) -> float:
-    """Convert frequency in GHz to angular frequency"""
+    """
+    Convert frequency to angular frequency
+    
+    Parameters
+    ----------
+    freq_GHz : float
+        Frequency in gigahertz (GHz)
+    
+    Returns
+    ----------
+    output : float
+        Angular frequency in radians per second (rad/s)
+    """
     return 2 * np.pi * 1e9 * freq_GHz
 
 def angular_frequency_to_wavenumber(angular_frequency: float) -> float:
-    """Convert angular frequency to wavenumber"""
+    """
+    Convert angular frequency to wavenumber
+    
+    Parameters
+    ----------
+    angular_frequency : float
+        Angular frequency (rad/s)
+    
+    Returns
+    ----------
+    output : float
+        Wavenumber in m^-1
+    """
     return angular_frequency / constants.c
 
 def freq_GHz_to_wavenumber(freq_GHz: float) -> float:
-    """Converts frequency in GHz to wavenumber"""
+    """
+    Convert frequency to wavenumber
+        
+    Parameters
+    ----------
+    freq_GHz : float
+        Frequency in gigahertz (GHz)
+        
+    Returns
+    ----------
+    output : float
+        Wavenumber in m^-1
+    """
     return angular_frequency_to_wavenumber(freq_GHz_to_angular_frequency(freq_GHz))
 
 ##################################################
@@ -35,8 +72,20 @@ def freq_GHz_to_wavenumber(freq_GHz: float) -> float:
 
 def find_q_labframe_cart_to_cyl(q_lab_cart: FloatArray) -> FloatArray:
     """
-    Converts q_labframe from Cartesian to cylindrical coordinates, both in the lab frame (not the beam frame)
-    The shape of q_lab_cart must be either (3,) or (3, N), where N is the number of points at which q is evaluated
+    Converts `q_labframe` from Cartesian to cylindrical coordinates, both in
+    the lab frame (not the beam frame). The shape of `q_lab_cart` must be
+    either `(3,)` or `(3, N)`, where N is the number of points at which `q`
+    is evaluated
+
+    Parameters
+    ----------
+    q_lab_cart : (3,) or (3,N) FloatArray
+        Position vector, lab frame, in Cartesian
+
+    Returns
+    ----------
+    q_lab_cyl : (3,) or (3,N) FloatArray
+        Position vector, lab frame, in cylindrical
     """
     if (q_lab_cart.ndim == 1 or q_lab_cart.ndim == 2) and q_lab_cart.shape[0] == 3: q_X, q_Y, q_Z = q_lab_cart
     else: raise ValueError(f"`find_q_labframe_cart_to_cyl`: Expected input to be shape (3,) or (3, N) but got shape {q_lab_cart.shape}")
@@ -44,8 +93,20 @@ def find_q_labframe_cart_to_cyl(q_lab_cart: FloatArray) -> FloatArray:
 
 def find_q_labframe_cyl_to_cart(q_lab_cyl: FloatArray) -> FloatArray:
     """
-    Converts q_labframe from cylindrical to Cartesian coordinates, both in the lab frame (not the beam frame)
-    The shape of q_lab_cyl must be either (3,) or (3, N), where N is the number of points at which q is evaluated
+    Converts `q_labframe` from cylindrical to Cartesian coordinates, both in
+    the lab frame (not the beam frame). The shape of `q_lab_cyl` must be
+    either `(3,)` or `(3, N)`, where N is the number of points at which `q`
+    is evaluated
+
+    Parameters
+    ----------
+    q_lab_cyl : (3,) or (3,N) FloatArray
+        Position vector, lab frame, in cylindrical
+
+    Returns
+    ----------
+    q_lab_cart : (3,) or (3,N) FloatArray
+        Position vector, lab frame, in Cartesian
     """
     if (q_lab_cyl.ndim == 1 or q_lab_cyl.ndim == 2) and q_lab_cyl.shape[0] == 3: q_R, q_p, q_Z = q_lab_cyl
     else: raise ValueError(f"`find_q_labframe_cyl_to_cart`: Expected input to be shape (3,) or (3, N) but got shape {q_lab_cyl.shape}")
@@ -53,9 +114,22 @@ def find_q_labframe_cyl_to_cart(q_lab_cyl: FloatArray) -> FloatArray:
 
 def find_K_labframe_cart_to_cyl(K_lab_cart: FloatArray, q_lab_cart: FloatArray) -> FloatArray:
     """
-    Converts K_labframe from Cartesian to cylindrical coordinates, both in the lab frame (not the beam frame)
-    The shape of K_lab_cart must be either (3,) or (3, N), where N is the number of points at which K is evaluated,
-    and the shapes of K_lab_cart and q_lab_cart must be the same
+    Converts `K_labframe` from Cartesian to cylindrical coordinates, both in
+    the lab frame (not the beam frame). The shape of `K_lab_cart` must be
+    either `(3,)` or `(3, N)`, where N is the number of points at which `K`
+    is evaluated, and `K_lab_cart` and `q_lab_cart` must have the same shape
+
+    Parameters
+    ----------
+    K_lab_cart : (3,) or (3,N) FloatArray
+        Wavevector, lab frame, in Cartesian
+    q_lab_cart : (3,) or (3,N) FloatArray
+        Position vector, lab frame, in Cartesian
+
+    Returns
+    ----------
+    K_lab_cyl : (3,) or (3,N) FloatArray
+        Wavevector, lab frame, in cylindrical
     """
     if (q_lab_cart.ndim == 1 or q_lab_cart.ndim == 2) and q_lab_cart.shape[0] == 3: q_R, q_zeta, q_Z = find_q_labframe_cart_to_cyl(q_lab_cart = q_lab_cart)
     else: raise ValueError(f"`find_K_labframe_cart_to_cyl`: Expected input to be shape (3,) or (3, N) but got shape {q_lab_cart.shape}")
@@ -76,9 +150,22 @@ def find_K_labframe_cart_to_cyl(K_lab_cart: FloatArray, q_lab_cart: FloatArray) 
 
 def find_K_labframe_cyl_to_cart(K_lab_cyl: FloatArray, q_lab_cyl: FloatArray) -> FloatArray:
     """
-    Converts K_labframe from cylindrical to Cartesian coordinates, both in the lab frame (not the beam frame)
-    The shape of K_lab_cyl must be either (3,) or (3, N), where N is the number of points at which K is evaluated,
-    and the shapes of K_lab_cyl and q_lab_cyl must be the same
+    Converts `K_labframe` from cylindrical to Cartesian coordinates, both in
+    the lab frame (not the beam frame). The shape of `K_lab_cyl` must be
+    either `(3,)` or `(3, N)`, where N is the number of points at which `K`
+    is evaluated, and `K_lab_cyl` and `q_lab_cyl` must have the same shape
+
+    Parameters
+    ----------
+    K_lab_cyl : (3,) or (3,N) FloatArray
+        Wavevector, lab frame, in cylindrical
+    q_lab_cyl : (3,) or (3,N) FloatArray
+        Position vector, lab frame, in cylindrical
+
+    Returns
+    ----------
+    K_lab_cart : (3,) or (3,N) FloatArray
+        Wavevector, lab frame, in Cartesian
     """
     if (q_lab_cyl.ndim == 1 or q_lab_cyl.ndim == 2) and q_lab_cyl.shape[0] == 3: q_R, q_zeta, q_Z = q_lab_cyl
     else: raise ValueError(f"`find_K_labframe_cyl_to_cart`: Expected input to be shape (3,) or (3, N) but got shape {q_lab_cyl.shape}")
@@ -99,12 +186,33 @@ def find_K_labframe_cyl_to_cart(K_lab_cyl: FloatArray, q_lab_cyl: FloatArray) ->
 
 def find_Psi_3D_labframe_cart_to_cyl(Psi_3D_labframe_cartesian: ComplexFloatArray, K_lab_cart: FloatArray, q_lab_cart: FloatArray) -> ComplexFloatArray:
     """
-    Converts Psi_3D_labframe from Cartesian to cylindrical coordinates, both in the lab frame (not the beam frame)
-    The shape of Psi_3D_labframe_cartesian must be either (3, 3) or (N, 3, 3), where N is the number of points at which Psi is evaluated,
-    with the shapes of K_lab_cart and q_lab_cart being the same size and also compatible with Psi_3D_labframe_cartesian (i.e. if
-    Psi_3D_labframe_cartesian is (3, 3) then K_lab_cart and q_lab_cart must be (3,), and if Psi_3D_labframe_cartesian is (N, 3, 3)
-    then K_lab_cart and q_lab_cart must be (3, N)). Note that the shape of Psi_3D_labframe_cartesian is different from the shapes
-    of K_lab_cart and q_lab_cart because of the way we evolve the beam
+    Converts `Psi_3D_labframe` from Cartesian to cylindrical coordinates,
+    both in the lab frame (not the beam frame). The shape of
+    `Psi_3D_labframe_cartesian` must be either `(3, 3)` or `(N, 3, 3)`,
+    where N is the number of points at which `Psi` is evaluated, with
+    `K_lab_cart` and `q_lab_cart` having the same shape and also compatible
+    with `Psi_3D_labframe_cartesian` (i.e. if `Psi_3D_labframe_cartesian` is
+    `(3, 3)` then `K_lab_cart` and `q_lab_cart` must be `(3,)`, and if
+    `Psi_3D_labframe_cartesian` is `(N, 3, 3)` then `K_lab_cart` and
+    `q_lab_cart` must be `(3, N)`)
+    
+    Note that the shape of `Psi_3D_labframe_cartesian` is different from the
+    shapes of `K_lab_cart` and `q_lab_cart` because of the way we evolve
+    the beam
+
+    Parameters
+    ----------
+    Psi_3D_labframe_cartesian : (3,3) or (N,3,3) FloatArray
+        Beam matrix, lab frame, in Cartesian
+    K_lab_cart : (3,) or (3,N) FloatArray
+        Wavevector, lab frame, in Cartesian
+    q_lab_cart : (3,) or (3,N) FloatArray
+        Position vector, lab frame, in Cartesian
+
+    Returns
+    ----------
+    Psi_3D_labframe_cylindrical : (3,3) or (N,3,3) FloatArray
+        Beam matrix, lab frame, in cylindrical
     """
     q_X, q_Y, _ = q_lab_cart
     q_R, q_zeta, q_Z = find_q_labframe_cart_to_cyl(q_lab_cart)
@@ -145,12 +253,33 @@ def find_Psi_3D_labframe_cart_to_cyl(Psi_3D_labframe_cartesian: ComplexFloatArra
 
 def find_Psi_3D_labframe_cyl_to_cart(Psi_3D_labframe_cylindrical: ComplexFloatArray, K_lab_cyl: FloatArray, q_lab_cyl: FloatArray) -> ComplexFloatArray:
     """
-    Converts Psi_3D_labframe from cylindrical to Cartesian coordinates, both in the lab frame (not the beam frame)
-    The shape of Psi_3D_labframe_cylindrical must be either (3, 3) or (N, 3, 3), where N is the number of points at which Psi is evaluated,
-    with the shapes of K_lab_cyl and q_lab_cyl being the same size and also compatible with Psi_3D_labframe_cylindrical (i.e. if
-    Psi_3D_labframe_cylindrical is (3, 3) then K_lab_cyl and q_lab_cyl must be (3,), and if Psi_3D_labframe_cylindrical is (N, 3, 3)
-    then K_lab_cyl and q_lab_cyl must be (3, N)). Note that the shape of Psi_3D_labframe_cylindrical is different from the shapes
-    of K_lab_cyl and q_lab_cyl because of the way we evolve the beam
+    Converts `Psi_3D_labframe` from cylindrical to Cartesian coordinates,
+    both in the lab frame (not the beam frame). The shape of
+    `Psi_3D_labframe_cylindrical` must be either `(3, 3)` or `(N, 3, 3)`,
+    where N is the number of points at which `Psi` is evaluated, with
+    `K_lab_cart` and `q_lab_cart` having the same shape and also compatible
+    with `Psi_3D_labframe_cylindrical` (i.e. if `Psi_3D_labframe_cylindrical`
+    is `(3, 3)` then `K_lab_cyl` and `q_lab_cyl` must be `(3,)`, and if
+    `Psi_3D_labframe_cylindrical` is `(N, 3, 3)` then `K_lab_cyl` and
+    `q_lab_cyl` must be `(3, N)`)
+    
+    Note that the shape of `Psi_3D_labframe_cylindrical` is different from
+    the shapes of `K_lab_cyl` and `q_lab_cyl` because of the way we evolve
+    the beam
+
+    Parameters
+    ----------
+    Psi_3D_labframe_cylindrical : (3,3) or (N,3,3) FloatArray
+        Beam matrix, lab frame, in cylindrical
+    K_lab_cyl : (3,) or (3,N) FloatArray
+        Wavevector, lab frame, in cylindrical
+    q_lab_cyl : (3,) or (3,N) FloatArray
+        Position vector, lab frame, in cylindrical
+
+    Returns
+    ----------
+    Psi_3D_labframe_cartesian : (3,3) or (N,3,3) FloatArray
+        Beam matrix, lab frame, in Cartesian
     """
     q_R, q_zeta, q_Z = q_lab_cyl
     q_X, q_Y, _ = find_q_labframe_cyl_to_cart(q_lab_cyl)
@@ -214,6 +343,26 @@ def find_Psi_3D_labframe_cyl_to_cart(Psi_3D_labframe_cylindrical: ComplexFloatAr
     return Psi_cart[0] if squeeze else Psi_cart
 
 def find_vector_and_q_cyl_to_cart(vector_labframe_cyl: FloatArray, q_labframe_cyl: FloatArray) -> Tuple[FloatArray, FloatArray]:
+    """
+    Converts `vector_labframe_cyl` and `q_labframe_cyl` from cylindrical
+    to Cartesian
+
+    Parameters
+    ----------
+    vector_labframe_cyl : (3,) FloatArray
+        Vector in cylindrical; note that this function cannot be used to
+        convert the wavevector, because the `K_zeta` component is the
+        unitless toroidal mode number
+    q_labframe_cyl : (3,) FloatArray
+        Position vector in cylindrical
+
+    Returns
+    ----------
+    vector_labframe_cart : (3,) FloatArray
+        Vector in Cartesian
+    q_labframe_cart : (3,) FloatArray
+        Position vector in Cartesian
+    """
     if not vector_labframe_cyl.shape == q_labframe_cyl.shape: raise ValueError(f"`vector_labframe_cyl` and `q_labframe_cyl` must have the same shape, but got {vector_labframe_cyl.shape} and {q_labframe_cyl.shape}")
     elif not vector_labframe_cyl.shape[0] == 3: raise ValueError(f"`vector_labframe_cyl` must be indexed as a 3-vector")
     elif not q_labframe_cyl.shape[0] == 3: raise ValueError(f"`q_labframe_cyl` must be indexed as a 3-vector")
@@ -247,8 +396,29 @@ def ray_line(
     poloidal_launch_angle_deg_Torbeam: float,
     toroidal_launch_angle_deg_Torbeam: float,
 ) -> FloatArray:
-    
-    """Returns `q_X`, `q_Y`, `q_Z`"""
+    """
+    Calculates the position vectors of a straight-line trajectory
+    parametrised by `tau` from a launch position `(q_X_launch, q_Y_launch,
+    q_Z_launch)` with launch angles `poloidal_launch_angle_deg_Torbeam`
+    and `toroidal_launch_angle_deg_Torbeam`
+
+    Parameters
+    ----------
+    q_X_launch, q_Y_launch, q_Z_launch : float
+        Position of the launch position
+    tau : float, int, FloatArray
+        Parameter of the ray trajectory
+    poloidal_launch_angle_deg_Torbeam : float
+        Poloidal launch angle, in the TORBEAM convention, in degrees
+    toroidal_launch_angle_deg_Torbeam : float
+        Toroidal launch angle, in the TORBEAM convention, in degrees
+
+    Returns
+    ----------
+    output : (3,) or (3,N) FloatArray
+        Coordinates, in Cartesian, of the ray trajectory at points `tau`,
+        with the same length as `tau`
+    """
 
     XYZ_start = np.array([q_X_launch, q_Y_launch, q_Z_launch])
 
@@ -256,9 +426,11 @@ def ray_line(
     # at a/up to some values of the parameter `tau`
     poloidal_launch_angle = -np.deg2rad(poloidal_launch_angle_deg_Torbeam)
     toroidal_launch_angle =  np.deg2rad(toroidal_launch_angle_deg_Torbeam) + np.pi
-    XYZ_step = np.array([np.cos(toroidal_launch_angle) * np.cos(poloidal_launch_angle),
-                         np.sin(toroidal_launch_angle) * np.cos(poloidal_launch_angle),
-                         np.sin(poloidal_launch_angle)])
+    XYZ_step = np.array([
+        np.cos(toroidal_launch_angle) * np.cos(poloidal_launch_angle),
+        np.sin(toroidal_launch_angle) * np.cos(poloidal_launch_angle),
+        np.sin(poloidal_launch_angle)
+    ])
 
     ray_line_positions = XYZ_start + np.outer(tau, XYZ_step)
 
@@ -269,7 +441,34 @@ def poloidal_flux_along_ray_line(
     tau: Union[float, int, FloatArray],
     poloidal_launch_angle_deg_Torbeam: float,
     toroidal_launch_angle_deg_Torbeam: float,
-    _field_cart_polflux: Callable):
+    _field_cart_polflux: Callable,
+) -> FloatArray:
+    """
+    Calculates the poloidal flux values along a straight-line trajectory
+    parametrised by `tau` from a launch position `(q_X_launch, q_Y_launch,
+    q_Z_launch)` with launch angles `poloidal_launch_angle_deg_Torbeam`
+    and `toroidal_launch_angle_deg_Torbeam`
+
+    Parameters
+    ----------
+    q_X_launch, q_Y_launch, q_Z_launch : float
+        Position of the launch position
+    tau : float, int, FloatArray
+        Parameter of the ray trajectory
+    poloidal_launch_angle_deg_Torbeam : float
+        Poloidal launch angle, in the TORBEAM convention, in degrees
+    toroidal_launch_angle_deg_Torbeam : float
+        Toroidal launch angle, in the TORBEAM convention, in degrees
+    _field_cart_polflux : Callable
+        Function which takes in Cartesian coordinates and returns the
+        poloidal flux at those points
+
+    Returns
+    ----------
+    output : (3,) or (3,N) FloatArray
+        Poloidal flux values along the ray trajectory at points `tau`,
+        with the same length as `tau`
+    """
     
     positions = ray_line(q_X_launch, q_Y_launch, q_Z_launch, tau, poloidal_launch_angle_deg_Torbeam, toroidal_launch_angle_deg_Torbeam)
 
@@ -302,7 +501,37 @@ def poloidal_flux_difference_along_ray_line(
     poloidal_launch_angle_deg_Torbeam: float,
     toroidal_launch_angle_deg_Torbeam: float,
     _field_cart_polflux: Callable,
-    poloidal_flux_enter: float):
+    poloidal_flux_enter: float,
+) -> FloatArray:
+    """
+    Calculates the poloidal flux difference, relative to the
+    `poloidal_flux_enter`, along a straight-line trajectory
+    parametrised by `tau` from a launch position `(q_X_launch, q_Y_launch,
+    q_Z_launch)` with launch angles `poloidal_launch_angle_deg_Torbeam`
+    and `toroidal_launch_angle_deg_Torbeam`
+
+    Parameters
+    ----------
+    q_X_launch, q_Y_launch, q_Z_launch : float
+        Position of the launch position
+    tau : float, int, FloatArray
+        Parameter of the ray trajectory
+    poloidal_launch_angle_deg_Torbeam : float
+        Poloidal launch angle, in the TORBEAM convention, in degrees
+    toroidal_launch_angle_deg_Torbeam : float
+        Toroidal launch angle, in the TORBEAM convention, in degrees
+    _field_cart_polflux : Callable
+        Function which takes in Cartesian coordinates and returns the
+        poloidal flux at those points
+    poloidal_flux_enter : float
+        Poloidal flux value to begin the ray-/beam-tracing calculations at
+
+    Returns
+    ----------
+    output : (3,) or (3,N) FloatArray
+        Poloidal flux difference, relative to `poloidal_flux_enter` along
+        the ray trajectory at points `tau`, with the same length as `tau`
+    """
     
     polflux = poloidal_flux_along_ray_line(q_X_launch, q_Y_launch, q_Z_launch, tau, poloidal_launch_angle_deg_Torbeam, toroidal_launch_angle_deg_Torbeam, _field_cart_polflux)
 
@@ -312,42 +541,50 @@ def poloidal_flux_difference_along_ray_line(
 
 # TO REMOVE -- rewrite using Einstein summation convention?
 def dot(a: Array, b: Array) -> Array:
-    """Dot product of arrays of vectors or matrices.
-
-    Covers the case that matmul and dot don't do very elegantly, and
-    avoids having to use a for loop to iterate over the array slices.
-
-    Replaces the deprecated contract_special.
+    """
+    Dot product of arrays of vectors or matrices, which covers the case
+    that `matmul` and `dot` don't do very elegantly, and avoids having to
+    use a for loop to iterate over the array slices. Replaces the
+    deprecated `contract_special`
 
     Parameters
     ----------
     arg_a, arg_b:
         One of:
-
         - matrix with shape TxMxN and a vector with TxN or TxM
         - two vectors of shape TxN
 
         For each T, independently compute the dot product of the
         matrices/vectors
-
     """
     return np.array(list(map(np.dot, a, b)))
 
 def make_array_3x3(arr: Array) -> Array:
-    r"""Convert a 2x2 array into a 3x3 by appending zeros on the outside:
+    r"""
+    Convert a 2x2 array into a 3x3 by appending zeros on the outside:
 
     .. math::
 
         \begin{pmatrix}
             a & b \\
-            c & d \\
+            c & d
         \end{pmatrix}
         \Rightarrow
         \begin{pmatrix}
             a & b & 0 \\
             c & d & 0 \\
-            0 & 0 & 0 \\
+            0 & 0 & 0
         \end{pmatrix}
+    
+    Parameters
+    ----------
+    arr : Array
+        The input 2x2 array to expand
+    
+    Returns
+    ----------
+    output : Array
+        A 3x3 array with zeroes appended to the right and bottom
     """
     if arr.shape != (2, 2): raise ValueError(f"Expected array shape to be (2, 2), got {arr.shape}")
     out = np.zeros((3, 3), dtype=arr.dtype)
@@ -355,16 +592,54 @@ def make_array_3x3(arr: Array) -> Array:
     return out
 
 def find_inverse_2D(matrix_2D: Array) -> Array:
+    """
+    Find the inverse M^-1 of a 2x2 matrix M; i.e. M x M^-1 = I. If matrix
+    M is close to singular, then raise an error; i.e. when | det(M) | < 1e-5
+
+    Parameters
+    ----------
+    matrix_2D : (2,2) Array
+        The input 2x2 array to invert
+
+    Returns
+    ----------
+    matrix_2D_inverse : (2,2) Array
+        The inverse array
+    """
     # Finds the inverse of a 2x2 matrix
     matrix_2D_inverse = np.zeros([2, 2], dtype=matrix_2D.dtype)
-    determinant = matrix_2D[0, 0] * matrix_2D[1, 1] - matrix_2D[0, 1] * matrix_2D[1, 0]
-    matrix_2D_inverse[0, 0] =  matrix_2D[1, 1] / determinant
-    matrix_2D_inverse[1, 1] =  matrix_2D[0, 0] / determinant
-    matrix_2D_inverse[0, 1] = -matrix_2D[0, 1] / determinant
-    matrix_2D_inverse[1, 0] = -matrix_2D[1, 0] / determinant
+    det = matrix_2D[0, 0] * matrix_2D[1, 1] - matrix_2D[0, 1] * matrix_2D[1, 0]
+    if np.abs(det) < 1e-5: raise ValueError(f"Matrix is close to singular")
+    matrix_2D_inverse[0, 0] =  matrix_2D[1, 1] / det
+    matrix_2D_inverse[1, 1] =  matrix_2D[0, 0] / det
+    matrix_2D_inverse[0, 1] = -matrix_2D[0, 1] / det
+    matrix_2D_inverse[1, 0] = -matrix_2D[1, 0] / det
     return matrix_2D_inverse
 
-def find_K_magnitude(cartesian: bool, K0: ArrayLike, K1: ArrayLike, K2: ArrayLike, q0: ArrayLike):
+def find_K_magnitude(cartesian: bool, K0: ArrayLike, K1: ArrayLike, K2: ArrayLike, q0: ArrayLike) -> ArrayLike:
+    """
+    Find the magnitude of the wavevector. If in cylindrical geometry (i.e.
+    `K_lab_cyl`) then account for the fact that `K_lab_cyl[1]` is the
+    toroidal mode number
+
+    Parameters
+    ----------
+    cartesian : bool
+        `True` for Cartesian geometry and `False` for cylindrical
+    K0 : ArrayLike
+        `K_X` for Cartesian geometry and `K_R` for cylindrical
+    K1 : ArrayLike
+        `K_Y` for Cartesian geometry and `K_zeta` for cylindrical
+    K2 : ArrayLike
+        `K_Z` for both Cartesian and cylindrical geometry
+    q0 : ArrayLike
+        `q_R` for cylindrical geometry; unused if Cartesian
+
+    Returns
+    ----------
+    output : ArrayLike
+        Magnitude of the wavevector
+    """
     return np.sqrt(K0**2 + K1**2 + K2**2) if cartesian else np.sqrt(K0**2 + (K1/q0)**2 + K2**2)
 
 ##################################################
@@ -374,20 +649,104 @@ def find_K_magnitude(cartesian: bool, K0: ArrayLike, K1: ArrayLike, K2: ArrayLik
 ##################################################
 
 def find_electron_mass(temperature: Optional[ArrayLike] = None) -> ArrayLike:
+    """
+    Finds the electron mass using Mazzucato's relativistic corrections
+
+    Parameters
+    ----------
+    temperature : ArrayLike or None
+        Temperature, in keV, at the points in the plasma to be queried
+
+    Returns
+    ----------
+    output : ArrayLike
+        If `temperature` is `ArrayLike`, then return the corrected electron
+        mass; otherwise just return the normal electron mass from
+        `scipy.constants.m_e`
+    """
     # Mazzucato's relativistic correction
     factor = 1 if temperature is None else 1 + temperature * 4.892 * 10**(-3)
     return factor * constants.m_e
 
 def find_normalised_plasma_freq(launch_angular_freq: float, electron_density: ArrayLike, temperature: Optional[ArrayLike] = None) -> ArrayLike:
+    """
+    Finds the plasma frequency, normalised to the angular frequency at launch
+
+    Parameters
+    ----------
+    launch_angular_freq : float
+        Angular frequency, in rad/s, at launch
+    electron_density : ArrayLike
+        Electron density, in 10^19 m^-3, at the points in the plasma to be
+        queried
+    temperature : ArrayLike or None
+        Temperature, in keV, at the points in the plasma to be queried
+
+    Returns
+    ----------
+    output : ArrayLike
+        Normalised plasma frequency at the queried points in the plasma
+    """
     m_e = find_electron_mass(temperature)
     return (constants.e * np.sqrt(electron_density * 10**19 / (constants.epsilon_0 * m_e))) / launch_angular_freq
 
 def find_normalised_gyro_freq(launch_angular_freq: float, B_total: ArrayLike, temperature: Optional[ArrayLike] = None) -> ArrayLike:
+    """
+    Finds the gyrofrequency, normalised to the angular frequency at launch
+
+    Parameters
+    ----------
+    launch_angular_freq : float
+        Angular frequency, in rad/s, at launch
+    B_total : ArrayLike
+        Magnitude of the magnetic field, in Tesla, at the points in the
+        plasma to be queried
+    temperature : ArrayLike or None
+        Temperature, in keV, at the points in the plasma to be queried
+
+    Returns
+    ----------
+    output : ArrayLike
+        Normalised gyrofrequency at the queried points in the plasma
+    """
     m_e = find_electron_mass(temperature)
     return constants.e * B_total / (m_e * launch_angular_freq)
 
-def find_normalised_cutoff_and_hybrid_freqs(launch_angular_freq: float, B_total: ArrayLike, electron_density: ArrayLike, temperature: Optional[ArrayLike] = None) -> List[ArrayLike]:
-    r"""Returns `(normalised_lefthand_cutoff, normalised_righthand_cutoff, normalised_upper_hybrid)`"""
+def find_normalised_freqs(launch_angular_freq: float, B_total: ArrayLike, electron_density: ArrayLike, temperature: Optional[ArrayLike] = None) -> List[ArrayLike]:
+    """
+    Finds the plasma frequency, gyrofrequency, left hand cutoff frequency,
+    right hand cutoff frequency, and upper hybrid frequency, all normalised
+    to the angular frequency at launch
+
+    Parameters
+    ----------
+    launch_angular_freq : float
+        Angular frequency, in rad/s, at launch
+    B_total : ArrayLike
+        Magnitude of the magnetic field, in Tesla, at the points in the
+        plasma to be queried
+    electron_density : ArrayLike
+        Electron density, in 10^19 m^-3, at the points in the plasma to be
+        queried
+    temperature : ArrayLike or None
+        Temperature, in keV, at the points in the plasma to be queried
+
+    Returns
+    ----------
+    normalised_plasma_freq : ArrayLike
+        Normalised plasma frequency at the queried points in the plasma
+    normalised_gyro_freq : ArrayLike
+        Normalised gyrofrequency at the queried points in the plasma
+    normalised_lefthand_cutoff : ArrayLike
+        Normalised left hand cutoff frequency at the queried points in the
+        plasma
+    normalised_righthand_cutoff : ArrayLike
+        Normalised right hand cutoff frequency at the queried points in the
+        plasma
+    normalised_upper_hybrid : ArrayLike
+        Normalised upper hybrid frequency at the queried points in the
+        plasma
+    """
     normalised_plasma_freq = find_normalised_plasma_freq(launch_angular_freq, electron_density, temperature)
     normalised_gyro_freq = find_normalised_gyro_freq(launch_angular_freq, B_total, temperature)
     normalised_lefthand_cutoff  = 0.5 * (-normalised_gyro_freq + np.sqrt(normalised_gyro_freq**2 + 4 * normalised_plasma_freq**2))
@@ -397,10 +756,46 @@ def find_normalised_cutoff_and_hybrid_freqs(launch_angular_freq: float, B_total:
 
 def find_epsilon_terms(
     launch_angular_freq: float, B_total: ArrayLike, electron_density: ArrayLike, temperature: Optional[ArrayLike] = None,
-    para: bool = True, perp: bool = True, g: bool = True
+    para: bool = True, perp: bool = True, g: bool = True,
 ) -> List[ArrayLike]:
-    r"""Returns `[epsilon_para, epsilon_perp, epsilon_g]` if all flags are `True`.
-    Otherwise, the corresponding term is omitted but everything else is ordered the same"""
+    """
+    Finds `epsilon_para` (`epsilon_bb`), `epsilon_perp` (`epsilon_11`), and
+    `epsilon_g` (`epsilon_12`) if all flags are `True`
+
+    Parameters
+    ----------
+    launch_angular_freq : float
+        Angular frequency, in rad/s, at launch
+    B_total : ArrayLike
+        Magnitude of the magnetic field, in Tesla, at the points in the
+        plasma to be queried
+    electron_density : ArrayLike
+        Electron density, in 10^19 m^-3, at the points in the plasma to be
+        queried
+    temperature : ArrayLike or None
+        Temperature, in keV, at the points in the plasma to be queried
+    para : bool
+        If `True`, return epsilon_para (epsilon_bb)
+    perp : bool
+        If `True`, return epsilon_perp (epsilon_11)
+    g : bool
+        If `True`, return epsilon_g (epsilon_12)
+
+    Returns
+    ----------
+    output : list of ArrayLike
+        If all flags are `True`, the entries of the list correspond to:
+
+            epsilon_para : ArrayLike
+                Also called epsilon_bb
+            epsilon_perp : ArrayLike
+                Also called epsilon_11
+            epsilon_g : ArrayLike
+                Also called epsilon_12
+        
+        Otherwise, the corresponding term is omitted but the ordering
+        is still the same
+    """
     toreturn = []
     normalised_plasma_freq = find_normalised_plasma_freq(launch_angular_freq, electron_density, temperature)
     normalised_gyro_freq = find_normalised_gyro_freq(launch_angular_freq, B_total, temperature)
@@ -411,40 +806,118 @@ def find_epsilon_terms(
     return toreturn
 
 def find_epsilon_para(launch_angular_freq: float, electron_density: ArrayLike, temperature: Optional[ArrayLike] = None) -> ArrayLike:
-    r"""Returns `epsilon_para`. Also called epsilon_bb in the paper"""
+    """
+    Finds `epsilon_para`. Also called `epsilon_bb` in the paper
+
+    Parameters
+    ----------
+    launch_angular_freq : float
+        Angular frequency, in rad/s, at launch
+    electron_density : ArrayLike
+        Electron density, in 10^19 m^-3, at the points in the plasma to be
+        queried
+    temperature : ArrayLike or None
+        Temperature, in keV, at the points in the plasma to be queried
+
+    Returns
+    ----------
+    epsilon_para : ArrayLike
+        Also called epsilon_bb
+    """
     return find_epsilon_terms(launch_angular_freq, 0, electron_density, temperature, para=True, perp=False, g=False)[0]
 
 def find_epsilon_perp(launch_angular_freq: float, B_total: ArrayLike, electron_density: ArrayLike, temperature: Optional[ArrayLike] = None) -> ArrayLike:
-    r"""Returns `epsilon_perp`. Also called epsilon_11 in the paper"""
+    """
+    Finds `epsilon_perp`. Also called `epsilon_11` in the paper
+
+    Parameters
+    ----------
+    launch_angular_freq : float
+        Angular frequency, in rad/s, at launch
+    B_total : ArrayLike
+        Magnitude of the magnetic field, in Tesla, at the points in the
+        plasma to be queried
+    electron_density : ArrayLike
+        Electron density, in 10^19 m^-3, at the points in the plasma to be
+        queried
+    temperature : ArrayLike or None
+        Temperature, in keV, at the points in the plasma to be queried
+
+    Returns
+    ----------
+    epsilon_perp : ArrayLike
+        Also called epsilon_11
+    """
     return find_epsilon_terms(launch_angular_freq, B_total, electron_density, temperature, para=False, perp=True, g=False)[0]
 
 def find_epsilon_g(launch_angular_freq: float, B_total: ArrayLike, electron_density: ArrayLike, temperature: Optional[ArrayLike] = None) -> ArrayLike:
-    r"""Returns `epsilon_g`. Also called epsilon_12 in the paper"""
+    """
+    Finds `epsilon_g`. Also called `epsilon_12` in the paper
+
+    Parameters
+    ----------
+    launch_angular_freq : float
+        Angular frequency, in rad/s, at launch
+    B_total : ArrayLike
+        Magnitude of the magnetic field, in Tesla, at the points in the
+        plasma to be queried
+    electron_density : ArrayLike
+        Electron density, in 10^19 m^-3, at the points in the plasma to be
+        queried
+    temperature : ArrayLike or None
+        Temperature, in keV, at the points in the plasma to be queried
+
+    Returns
+    ----------
+    epsilon_g : ArrayLike
+        Also called epsilon_12
+    """
     return find_epsilon_terms(launch_angular_freq, B_total, electron_density, temperature, para=False, perp=False, g=True)[0]
-
-# def find_epsilon_para(launch_angular_freq: float, electron_density: ArrayLike, temperature: Optional[ArrayLike] = None) -> ArrayLike:
-#     r"""Also called epsilon_bb in the paper"""
-#     normalised_plasma_freq = find_normalised_plasma_freq(launch_angular_freq, electron_density, temperature)
-#     return 1 - normalised_plasma_freq**2
-
-# def find_epsilon_perp(launch_angular_freq: float, B_total: ArrayLike, electron_density: ArrayLike, temperature: Optional[ArrayLike] = None) -> ArrayLike:
-#     r"""Also called epsilon_11 in the paper"""
-#     normalised_plasma_freq = find_normalised_plasma_freq(launch_angular_freq, electron_density, temperature)
-#     normalised_gyro_freq = find_normalised_gyro_freq(launch_angular_freq, B_total, temperature)
-#     return 1 - normalised_plasma_freq**2 / (1 - normalised_gyro_freq**2)
-
-# def find_epsilon_g(launch_angular_freq: float, B_total: ArrayLike, electron_density: ArrayLike, temperature: Optional[ArrayLike] = None) -> ArrayLike:
-#     r"""Also called epsilon_12 in the paper"""
-#     normalised_plasma_freq = find_normalised_plasma_freq(launch_angular_freq, electron_density, temperature)
-#     normalised_gyro_freq = find_normalised_gyro_freq(launch_angular_freq, B_total, temperature)
-#     return (normalised_plasma_freq**2 * normalised_gyro_freq / (1 - normalised_gyro_freq**2))
 
 def find_Booker_terms(
     launch_angular_freq: float, B_total: ArrayLike, sin_theta_m_sq: ArrayLike, electron_density: ArrayLike, temperature: Optional[ArrayLike] = None,
-    alpha: bool = True, beta: bool = True, gamma: bool = True
+    alpha: bool = True, beta: bool = True, gamma: bool = True,
 ) -> List[ArrayLike]:
-    r"""Returns `[Booker_alpha, Booker_beta, Booker_gamma]` if all flags are `True`.
-    Otherwise, the corresponding term is omitted but everything else is ordered the same"""
+    """
+    Finds `Booker_alpha`, `Booker_beta`, and `Booker_gamma` if all flags
+    are `True`
+
+    Parameters
+    ----------
+    launch_angular_freq : float
+        Angular frequency, in rad/s, at launch
+    B_total : ArrayLike
+        Magnitude of the magnetic field, in Tesla, at the points in the
+        plasma to be queried
+    sin_theta_m_sq : ArrayLike
+        ( sin(theta_m) )^2 at the points in the plasma to be queried
+    electron_density : ArrayLike
+        Electron density, in 10^19 m^-3, at the points in the plasma to be
+        queried
+    temperature : ArrayLike or None
+        Temperature, in keV, at the points in the plasma to be queried
+    alpha : bool
+        If `True`, return Booker_alpha
+    beta : bool
+        If `True`, return Booker_beta
+    gamma : bool
+        If `True`, return Booker_gamma
+
+    Returns
+    ----------
+    output : list of ArrayLike
+        If all flags are `True`, the entries of the list correspond to:
+
+            Booker_alpha : ArrayLike
+                Booker_alpha
+            Booker_beta : ArrayLike
+                Booker_beta
+            Booker_gamma : ArrayLike
+                Booker_gamma
+        
+        Otherwise, the corresponding term is omitted but the ordering
+        is still the same
+    """
     toreturn = []
     epsilon_para, epsilon_perp, epsilon_g = find_epsilon_terms(launch_angular_freq, B_total, electron_density, temperature)
 
@@ -454,36 +927,109 @@ def find_Booker_terms(
     return toreturn
 
 def find_Booker_alpha(launch_angular_freq: float, B_total: ArrayLike, sin_theta_m_sq: ArrayLike, electron_density: ArrayLike, temperature: Optional[ArrayLike] = None) -> ArrayLike:
-    r"""Returns `Booker_alpha`"""
+    """
+    Finds `Booker_alpha`
+
+    Parameters
+    ----------
+    launch_angular_freq : float
+        Angular frequency, in rad/s, at launch
+    B_total : ArrayLike
+        Magnitude of the magnetic field, in Tesla, at the points in the
+        plasma to be queried
+    sin_theta_m_sq : ArrayLike
+        ( sin(theta_m) )^2 at the points in the plasma to be queried
+    electron_density : ArrayLike
+        Electron density, in 10^19 m^-3, at the points in the plasma to be
+        queried
+    temperature : ArrayLike or None
+        Temperature, in keV, at the points in the plasma to be queried
+
+    Returns
+    ----------
+    Booker_alpha : ArrayLike
+    """
     return find_Booker_terms(launch_angular_freq, B_total, sin_theta_m_sq, electron_density, temperature, alpha=True, beta=False, gamma=False)[0]
 
 def find_Booker_beta(launch_angular_freq: float, B_total: ArrayLike, sin_theta_m_sq: ArrayLike, electron_density: ArrayLike, temperature: Optional[ArrayLike] = None) -> ArrayLike:
-    r"""Returns `Booker_beta`"""
+    """
+    Finds `Booker_beta`
+
+    Parameters
+    ----------
+    launch_angular_freq : float
+        Angular frequency, in rad/s, at launch
+    B_total : ArrayLike
+        Magnitude of the magnetic field, in Tesla, at the points in the
+        plasma to be queried
+    sin_theta_m_sq : ArrayLike
+        ( sin(theta_m) )^2 at the points in the plasma to be queried
+    electron_density : ArrayLike
+        Electron density, in 10^19 m^-3, at the points in the plasma to be
+        queried
+    temperature : ArrayLike or None
+        Temperature, in keV, at the points in the plasma to be queried
+
+    Returns
+    ----------
+    Booker_beta : ArrayLike
+    """
     return find_Booker_terms(launch_angular_freq, B_total, sin_theta_m_sq, electron_density, temperature, alpha=False, beta=True, gamma=False)[0]
 
 def find_Booker_gamma(launch_angular_freq: float, B_total: ArrayLike, sin_theta_m_sq: ArrayLike, electron_density: ArrayLike, temperature: Optional[ArrayLike] = None) -> ArrayLike:
-    r"""Returns `Booker_gamma`"""
+    """
+    Finds `Booker_gamma`
+
+    Parameters
+    ----------
+    launch_angular_freq : float
+        Angular frequency, in rad/s, at launch
+    B_total : ArrayLike
+        Magnitude of the magnetic field, in Tesla, at the points in the
+        plasma to be queried
+    sin_theta_m_sq : ArrayLike
+        ( sin(theta_m) )^2 at the points in the plasma to be queried
+    electron_density : ArrayLike
+        Electron density, in 10^19 m^-3, at the points in the plasma to be
+        queried
+    temperature : ArrayLike or None
+        Temperature, in keV, at the points in the plasma to be queried
+
+    Returns
+    ----------
+    Booker_gamma : ArrayLike
+    """
     return find_Booker_terms(launch_angular_freq, B_total, sin_theta_m_sq, electron_density, temperature, alpha=False, beta=False, gamma=True)[0]
 
-# def find_Booker_alpha(launch_angular_freq: float, B_total: ArrayLike, sin_theta_m_sq: ArrayLike, electron_density: ArrayLike, temperature: Optional[ArrayLike] = None) -> ArrayLike:
-#     epsilon_para = find_epsilon_para(launch_angular_freq, electron_density, temperature)
-#     epsilon_perp = find_epsilon_perp(launch_angular_freq, B_total, electron_density, temperature)
-#     return epsilon_para * sin_theta_m_sq + epsilon_perp * (1 - sin_theta_m_sq)
-
-# def find_Booker_beta(launch_angular_freq: float, B_total: ArrayLike, sin_theta_m_sq: ArrayLike, electron_density: ArrayLike, temperature: Optional[ArrayLike] = None) -> ArrayLike:
-#     epsilon_para = find_epsilon_para(launch_angular_freq, electron_density, temperature)
-#     epsilon_perp = find_epsilon_perp(launch_angular_freq, B_total, electron_density, temperature)
-#     epsilon_g = find_epsilon_g(launch_angular_freq, B_total, electron_density, temperature)
-#     return -epsilon_perp * epsilon_para * (1 + sin_theta_m_sq) - (epsilon_perp**2 - epsilon_g**2) * (1 - sin_theta_m_sq)
-
-# def find_Booker_gamma(launch_angular_freq: float, B_total: ArrayLike, sin_theta_m_sq: ArrayLike, electron_density: ArrayLike, temperature: Optional[ArrayLike] = None) -> ArrayLike:
-#     epsilon_para = find_epsilon_para(launch_angular_freq, electron_density, temperature)
-#     epsilon_perp = find_epsilon_perp(launch_angular_freq, B_total, electron_density, temperature)
-#     epsilon_g = find_epsilon_g(launch_angular_freq, B_total, electron_density, temperature)
-#     return epsilon_para * (epsilon_perp**2 - epsilon_g**2)
-
 def find_D_terms(launch_angular_freq: float, K_magnitude: ArrayLike, epsilon_para: ArrayLike, epsilon_perp: ArrayLike, epsilon_g: ArrayLike, theta_m: ArrayLike) -> List[ArrayLike]:
-    r"""Returns `[D_11, D_22, D_bb, D_12, D_1b]`"""
+    """
+    Finds `D_11`, `D_22`, `D_bb`, `D_12` and `D_1b` of the cold plasma
+    dispersion relation tensor
+
+    Parameters
+    ----------
+    launch_angular_freq : float
+        Angular frequency, in rad/s, at launch
+    K_magnitude : ArrayLike
+        Magnitude of the wavevector at the points in the plasma to be
+        queried
+    epsilon_para : ArrayLike
+        `epsilon_para` at the points in the plasma to be queried
+    epsilon_perp : ArrayLike
+        `epsilon_perp` at the points in the plasma to be queried
+    epsilon_g : ArrayLike
+        `epsilon_g` at the points in the plasma to be queried
+    theta_m : ArrayLike
+        `theta_m` at the points in the plasma to be queried
+
+    Returns
+    ----------
+    D_11 : ArrayLike
+    D_22 : ArrayLike
+    D_bb : ArrayLike
+    D_12 : ArrayLike
+    D_1b : ArrayLike
+    """
     K0 = angular_frequency_to_wavenumber(launch_angular_freq)
     N = K_magnitude / K0
     sin_theta_m = np.sin(theta_m)
@@ -498,7 +1044,33 @@ def find_D_terms(launch_angular_freq: float, K_magnitude: ArrayLike, epsilon_par
     return [D_11, D_22, D_bb, D_12, D_1b]
 
 def find_H_Cardano_eigh(launch_angular_freq: float, K_magnitude: ArrayLike, epsilon_para: ArrayLike, epsilon_perp: ArrayLike, epsilon_g: ArrayLike, theta_m: ArrayLike) -> Tuple[FloatArray, ComplexFloatArray]:
-    r"""Returns `(eigvals, eigvecs)`"""
+    """
+    Finds the eigenvectors and eigenvalues of the cold plasma dispersion
+    relation tensor with finite mismatch
+
+    Parameters
+    ----------
+    launch_angular_freq : float
+        Angular frequency, in rad/s, at launch
+    K_magnitude : ArrayLike
+        Magnitude of the wavevector at the points in the plasma to be
+        queried
+    epsilon_para : ArrayLike
+        `epsilon_para` at the points in the plasma to be queried
+    epsilon_perp : ArrayLike
+        `epsilon_perp` at the points in the plasma to be queried
+    epsilon_g : ArrayLike
+        `epsilon_g` at the points in the plasma to be queried
+    theta_m : ArrayLike
+        `theta_m` at the points in the plasma to be queried
+
+    Returns
+    ----------
+    eigvals : FloatArray
+        Eigenvalues of H
+    eigvecs : ComplexFloatArray
+        Eigenvectors of H, in the same order as eigvals
+    """
     D_11, D_22, D_bb, D_12, D_1b = find_D_terms(launch_angular_freq, K_magnitude, epsilon_para, epsilon_perp, epsilon_g, theta_m)
 
     if isinstance(K_magnitude, (float, int)): length = 1
@@ -509,17 +1081,47 @@ def find_H_Cardano_eigh(launch_angular_freq: float, K_magnitude: ArrayLike, epsi
     D_tensor[:, 0, 1] = -1j * D_12
     D_tensor[:, 0, 2] = D_1b
     D_tensor[:, 1, 1] = D_22
-    # D_tensor[:, 1, 2] = np.zeros_like(D_11)
     D_tensor[:, 2, 2] = D_bb
-
     eigvals, eigvecs = np.linalg.eigh(D_tensor)
 
     return np.squeeze(eigvals), np.squeeze(eigvecs)
 
 def find_mode_index_and_ehat(mode_flag: VALID_LAUNCH_MODE_FLAGS, H_Cardanos: FloatArray, ehats: ComplexFloatArray, tol_H: float = 1e-5, tol_O_mode_polarisation: float = 0.25) -> Tuple[int, float, ComplexFloatArray]:
-    r"""`H_Cardanos` and `ehats` must be arranged such that `H_Cardano[i]` corresponds
-    to `ehats[:,i]`. If more than one `mode_flag` is provided, then `mode_flag[i]` must
-    also correspond to `H_cardano[i]`"""
+    """
+    Given an array `H_Cardanos` of shape (3,) and an array of `ehats` of
+    shape (3,3) where `H_Cardanos[i]` corresponds to `ehats[:,i]`, choose
+    the element of `H_Cardanos` which has the smallest absolute value; i.e.
+    choose `idx` such that `np.min(H_Cardanos) == abs(H_Cardanos[idx])`.
+    This corresponds to the solution to be used to calculate the correct
+    mode solution during post-processing
+
+    Parameters
+    ----------
+    mode_flag : VALID_LAUNCH_MODE_FLAGS
+        Must be one of [1, -1, "O", "X"]
+    H_Cardanos : FloatArray
+        Array of floats corresponding to the eigenvalues of the cold
+        plasma dispersion relation tensor
+    ehats : ComplexFloatArray
+        Array of vectors corresponding to the eigenvectors of the cold
+        plasma dispersion relation tensor, in the same order as
+        `H_Cardanos`
+    tol_H : float
+        Absolute tolerance for the solution in satisfying H=0
+    tol_O_mode_polarisation : float
+        Absolute tolerance to check if the polarisation vector corresponds
+        to O- or X-mode; i.e. if `e_hat[-1] < tol_O_mode_polarisation` then
+        it is X-mode, otherwise it's O-mode
+
+    Returns
+    ----------
+    mode_index : int
+        Index of the solution corresponding to the desired mode_flag
+    H : float
+        Value of the solution; i.e. `H_Cardanos[mode_index]`
+    ehat : ComplexFloatArray
+        Polarisation vector of the chosen solution; i.e. `ehats[mode_index]`
+    """
     soln_idxs = np.where(np.abs(H_Cardanos) <= tol_H)[0]
     soln_H = H_Cardanos[soln_idxs]
     soln_ehats = ehats[:, soln_idxs] # note that soln_H[i] still corresponds to soln_ehats[:,i]

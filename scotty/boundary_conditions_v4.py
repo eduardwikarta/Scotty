@@ -4,9 +4,7 @@ from scipy.optimize import newton
 from scotty.checks_v4 import VALID_BOUNDARY_FLAGS, VALID_FIELDS, MagneticField_Cylindrical, MagneticField_Cartesian
 from scotty.fun_general_v4 import (
     angular_frequency_to_wavenumber,
-    find_normalised_plasma_freq,
-    find_normalised_gyro_freq, 
-    find_normalised_cutoff_and_hybrid_freqs,
+    find_normalised_freqs,
     find_q_labframe_cyl_to_cart,
     find_vector_and_q_cyl_to_cart,
     find_q_labframe_cart_to_cyl,
@@ -135,9 +133,12 @@ def find_K_plasma(
         # b_hat = field.unitvector(*q_entry)
 
         # Check plasma cutoff and hybrid frequencies
-        plasma_freq = find_normalised_plasma_freq(angular_freq, electron_density_p, temperature)
-        gyro_freq = find_normalised_gyro_freq(angular_freq, B_magnitude, temperature)
-        omega_L, omega_R, omega_UH = find_normalised_cutoff_and_hybrid_freqs(angular_freq, B_magnitude, electron_density_p, temperature)
+        (   normalised_plasma_freq,
+            normalised_gyro_freq,
+            normalised_LH_cutoff_freq,
+            normalised_RH_cutoff_freq,
+            normalised_UH_freq,
+        ) = find_normalised_freqs(angular_freq, B_magnitude, electron_density_p, temperature)
 
         log.debug(f"""
         Finding K at the plasma entry point with {boundary_flag} boundary conditions
@@ -148,11 +149,11 @@ def find_K_plasma(
         #   - b_hat = {b_hat}
         #   - |B| = {B_magnitude}
         #
-        #   - w_pe / w_launch = {plasma_freq}
-        #   - w_ce / w_launch = {gyro_freq}
-        #   - w_L  / w_launch = {omega_L}
-        #   - w_R  / w_launch = {omega_R}
-        #   - w_UH / w_launch = {omega_UH}
+        #   - w_pe / w_launch = {normalised_plasma_freq}
+        #   - w_ce / w_launch = {normalised_gyro_freq}
+        #   - w_L  / w_launch = {normalised_LH_cutoff_freq}
+        #   - w_R  / w_launch = {normalised_RH_cutoff_freq}
+        #   - w_UH / w_launch = {normalised_UH_freq}
         #
         #   - {"d(polflux)/dX" if cart else "d(polflux)/dR"} = {dp_dX}
         #   - {"d(polflux)/dY" if cart else "d(polflux)/dzeta"} = {dp_dY}
@@ -163,17 +164,17 @@ def find_K_plasma(
 
         # TO REMOVE -- need to rewrite andf refactor this properly. 12 Nov
         mode_flag_sign = 1 # find_mode_flag_sign(electron_density_p, B_magnitude, launch_angular_frequency, temperature)
-        if ((mode_flag_sign * mode_flag ==  1 and plasma_freq >= 1) or
-            (mode_flag_sign * mode_flag == -1 and omega_L >= 1) or
-            (mode_flag_sign * mode_flag == -1 and omega_R >= 1 and omega_UH <= 1)):
+        if ((mode_flag_sign * mode_flag ==  1 and normalised_plasma_freq >= 1) or
+            (mode_flag_sign * mode_flag == -1 and normalised_LH_cutoff_freq >= 1) or
+            (mode_flag_sign * mode_flag == -1 and normalised_RH_cutoff_freq >= 1 and normalised_UH_freq <= 1)):
             raise ValueError("Error: cut-off freq higher than beam freq on plasma side of plasma-vac boundary")
         
-        if mode_flag_sign * mode_flag == 1  and plasma_freq >= 1:
-            raise ValueError(f"Cut-off freq higher than beam freq on plasma side of plasma-vacuum boundary: w_plasma / w_launch = {plasma_freq} >= 1")
-        elif mode_flag_sign * mode_flag == -1 and omega_L >= 1:
-            raise ValueError(f"Cut-off freq higher than beam freq on plasma side of plasma-vacuum boundary: w_L / w_launch = {omega_L} >= 1")
-        elif mode_flag_sign * mode_flag == -1 and omega_R >= 1 and omega_UH <= 1:
-            raise ValueError(f"Cut-off freq higher than beam freq on plasma side of plasma-vacuum boundary: w_R / w_launch = {omega_R} >= 1 and w_UH / w_launch = {omega_UH} <= 1")
+        if mode_flag_sign * mode_flag == 1  and normalised_plasma_freq >= 1:
+            raise ValueError(f"Cut-off freq higher than beam freq on plasma side of plasma-vacuum boundary: w_plasma / w_launch = {normalised_plasma_freq} >= 1")
+        elif mode_flag_sign * mode_flag == -1 and normalised_LH_cutoff_freq >= 1:
+            raise ValueError(f"Cut-off freq higher than beam freq on plasma side of plasma-vacuum boundary: w_L / w_launch = {normalised_LH_cutoff_freq} >= 1")
+        elif mode_flag_sign * mode_flag == -1 and normalised_RH_cutoff_freq >= 1 and normalised_UH_freq <= 1:
+            raise ValueError(f"Cut-off freq higher than beam freq on plasma side of plasma-vacuum boundary: w_R / w_launch = {normalised_RH_cutoff_freq} >= 1 and w_UH / w_launch = {normalised_UH_freq} <= 1")
         
         # In our derivations, we find three vectors which are parallel to
         # the flux surface by considering three displacements in X, Y, and Z
