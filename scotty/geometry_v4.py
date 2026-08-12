@@ -17,6 +17,63 @@ log = logging.getLogger()
 #
 ##################################################
 
+def get_profile_data(
+    find_B_method: str,
+    geometry: Literal["cylindrical", "cartesian"],
+    magnetic_data_path: pathlib.Path,
+    input_filename_suffix: str
+) -> Tuple[FloatArray, FloatArray, FloatArray, FloatArray, FloatArray, FloatArray, FloatArray]:
+
+    ##############################################
+    # OMFIT
+    ##############################################
+    if find_B_method == "omfit":
+        log.info(f"Using OMFIT JSON Torbeam file for B and poloidal flux")
+        def unflatten(R_coord, Z_coord, arr):
+            """Convert from column-major (TORBEAM, Fortran) to row-major order (Scotty, Python)"""
+            return np.asarray(arr).reshape(len(Z_coord), len(R_coord)).T
+
+        topfile_path = magnetic_data_path / f"topfile{input_filename_suffix}.json"
+        if geometry == "cylindrical":
+            with open(topfile_path) as f: data = json.load(f)
+            q0 = np.array(data["R"])
+            q1 = np.array([0])
+            q2 = np.array(data["Z"])
+            B0 = unflatten(q0, q2, np.array(data["Br"]))
+            B1 = unflatten(q0, q2, np.array(data["Bt"]))
+            B2 = unflatten(q0, q2, np.array(data["Bz"]))
+            psi = unflatten(q0, q2, np.array(data["pol_flux"]))
+        else: # geometry == "cartesian":
+            raise ValueError(f"`find_B_method` = 'omfit' only works for `geometry` = 'cylindrical' for now")
+
+    ##############################################
+    # TORBEAM
+    ##############################################
+    elif find_B_method == "torbeam":
+        log.info(f"Using TORBEAM input files for B and poloidal flux")
+        topfile_path = magnetic_data_path / f"topfile{input_filename_suffix}"
+        if geometry == "cylindrical":
+            torbeam = Torbeam.from_file(topfile_path)
+            q0 = torbeam.R_grid
+            q1 = np.array([0])
+            q2 = torbeam.Z_grid
+            B0 = torbeam.B_R
+            B1 = torbeam.B_T
+            B2 = torbeam.B_Z
+            psi = torbeam.psi
+        else: # geometry == "cartesian":
+            raise ValueError(f"`find_B_method` = 'omfit' only works for `geometry` = 'cylindrical' for now")
+
+    else: raise ValueError(f"`find_B_method` = '{find_B_method}' is not supported")
+    
+    return q0, q1, q2, B0, B1, B2, psi
+
+##################################################
+#
+# SPLINE FUNCTIONS
+#
+##################################################
+
 @timer
 def _make_rect_spline(
     R_coord, Z_coord, data_array, interp_order_int: int, interp_smoothing: int
@@ -59,14 +116,12 @@ def _make_rect_spline_derivatives(
 def _make_cuboid_spline(
     X_coord, Y_coord, Z_coord, data_array, interp_order_str: str
 ) -> Tuple[Callable[[ArrayLike, ArrayLike, ArrayLike], FloatArray], RegularGridInterpolator]:
-
     spline = RegularGridInterpolator(
         points = (X_coord, Y_coord, Z_coord),
         values = data_array,
         method = interp_order_str,
         bounds_error = False,
     )
-
     return lambda X,Y,Z: spline((X,Y,Z)), spline
 
 
@@ -185,7 +240,7 @@ class MagneticField_Cylindrical(ABC):
     # For abstraction purposes
     def B_X(self, R: ArrayLike, zeta: ArrayLike, Z: ArrayLike) -> FloatArray: return self.B_R(R,zeta,Z)*np.cos(zeta) - self.B_T(R,zeta,Z)*np.sin(zeta)
     def B_Y(self, R: ArrayLike, zeta: ArrayLike, Z: ArrayLike) -> FloatArray: return self.B_R(R,zeta,Z)*np.sin(zeta) + self.B_T(R,zeta,Z)*np.cos(zeta)
-    def polflux_incart(self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike) -> FloatArray: return self.polflux(np.sqrt(X**2 + Y**2), 0, Z)
+    def polflux_in_cartesian(self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike) -> FloatArray: return self.polflux(np.sqrt(X**2 + Y**2), 0, Z)
 
 
 
@@ -349,7 +404,7 @@ class MagneticField_Cartesian(ABC):
         return self._calculate_incart_outcart(X,Y,Z, vector=False, unitvector=False, magnitude=True)[0]
     
     # For abstraction purposes
-    def polflux_incart(self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike) -> FloatArray: return self.polflux(X,Y,Z)
+    def polflux_in_cartesian(self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike) -> FloatArray: return self.polflux(X,Y,Z)
     def unitvector_in_cartesian(self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike) -> FloatArray: return self.unitvector(X,Y,Z)
 
 
@@ -447,7 +502,7 @@ def create_magnetic_geometry(
     interp_order_str: str,
     interp_order_int: int,
     interp_smoothing: int,
-    magnetic_data_path: Union[str, pathlib.Path],
+    magnetic_data_path: pathlib.Path,
     input_filename_suffix: str = "",
     shot: Optional[int] = None,
     equil_time: Optional[float] = None,
@@ -456,10 +511,7 @@ def create_magnetic_geometry(
     
     log.debug(f"Reading and creating field profile")
 
-    # If the user passes an interpolated field, then just use that
-    if isinstance(find_B_method, (MagneticField_Cylindrical)) and geometry == "cylindrical":
-        log.debug(f"Using existing field profile of type `{type(find_B_method)}` passed from `find_B_method`")
-        return find_B_method
+    # ===== ===== ===== ===== ===== ===== ===== ===== ===== =====
     # elif isinstance(find_B_method, (MagneticField_Cylindrical)) and geometry == "cartesian":
     # log.debug(f"Creating a 3-D field profile from the given 2-D profile")
     # min_X, max_X = np.min(find_B_method.R_coord), np.max(find_B_method.R_coord)
@@ -478,64 +530,71 @@ def create_magnetic_geometry(
     # B_Z = find_B_method.B_Z(RR, ZZ)
     # polflux = find_B_method.poloidal_flux(RR, ZZ)
 
-    # # (field,
-    # #     duration_field_interpolation)
-    # field = InterpolatedField_Cartesian(
-    #                                     X_coords, Y_coords, Z_coords,
-    #                                     B_X, B_Y, B_Z, polflux,
-    #                                     interp_order_str)
+    # (
+    #     field,
+    #     duration_field_interpolation
+    # ) = timer(InterpolatedField_Cartesian)(
+    #     X_coords, Y_coords, Z_coords,
+    #     B_X, B_Y, B_Z, polflux,
+    #     interp_order_str)
     
-    # log.debug(f"Converting the field profile took {duration_field_interpolation} s")
+    # # log.debug(f"Converting the field profile took {duration_field_interpolation} s")
 
     # return field
-    
-    # Otherwise, check what it should be and interpolate accordingly
-    find_B_method = find_B_method.lower()
+    # ===== ===== ===== ===== ===== ===== ===== ===== ===== =====
 
-    # Standardising inputs
-    if isinstance(magnetic_data_path, str): magnetic_data_path = pathlib.Path(magnetic_data_path)
+    # If the user passes an interpolated field, then just use that    
+    if ((isinstance(find_B_method, MagneticField_Cylindrical) and geometry == "cylindrical") or
+        (isinstance(find_B_method, MagneticField_Cartesian)   and geometry == "cartesian")):
+        log.debug(f"Using existing field profile of type `{type(find_B_method)}` passed from `find_B_method`")
+        return find_B_method
 
-    # NOTE: only cylindrical supported
-    if find_B_method == "omfit":
-        log.debug(f"Using OMFIT JSON Torbeam file for B and poloidal flux")
-        if geometry == "cartesian": raise ValueError(f"`find_B_method` = 'omfit' only works for `geometry` = 'cylindrical'")
-        topfile = magnetic_data_path / f"topfile{input_filename_suffix}.json"
+    # If the interpolated field doesnt match the user's geometry, raise an error
+    elif ((isinstance(find_B_method, MagneticField_Cylindrical) and geometry == "cartesian") or
+          (isinstance(find_B_method, MagneticField_Cartesian)   and geometry == "cylindrical")):
+        raise RuntimeError(f"Using existing field profile of type `{type(find_B_method)}` passed from `find_B_method` is incompatible with `geometry` = {geometry}")
 
-        with open(topfile) as f: data = json.load(f)
-        R_coord = np.array(data["R"])
-        Z_coord = np.array(data["Z"])
-
-        def unflatten(arr):
-            """Convert from column-major (TORBEAM, Fortran) to row-major order (Scotty, Python)"""
-            return np.asarray(arr).reshape(len(Z_coord), len(R_coord)).T
-        
-        return InterpolatedField_Cylindrical(
-            R_coord=R_coord,
-            Z_coord=Z_coord,
-            B_R=unflatten(data["Br"]),
-            B_T=unflatten(data["Bt"]),
-            B_Z=unflatten(data["Bz"]),
-            psi=unflatten(data["pol_flux"]),
-            interp_order=interp_order_int,
-            interp_smoothing=interp_smoothing,
+    # If a string, then interpolate as per normal
+    elif isinstance(find_B_method, str):
+        (   q0, q1, q2,
+            B0, B1, B2,
+            psi,
+        ) = get_profile_data(
+            find_B_method = find_B_method.lower(),
+            geometry = geometry,
+            magnetic_data_path = magnetic_data_path,
+            input_filename_suffix = input_filename_suffix,
         )
-    
-    # NOTE: only cylindrical supported
-    elif find_B_method == "torbeam":
-        log.debug(f"Using Torbeam input files for B and poloidal flux")
-        if geometry == "cartesian": raise ValueError(f"`find_B_method` = 'omfit' only works for `geometry` = 'cylindrical'")
-        topfile = magnetic_data_path / f"topfile{input_filename_suffix}"
-        torbeam = Torbeam.from_file(topfile)
 
-        return InterpolatedField_Cylindrical(
-            R_coord=torbeam.R_grid,
-            Z_coord=torbeam.Z_grid,
-            B_R=torbeam.B_R,
-            B_T=torbeam.B_T,
-            B_Z=torbeam.B_Z,
-            psi=torbeam.psi,
-            interp_order=interp_order_int,
-            interp_smoothing=interp_smoothing,
-        )
+        if geometry == "cylindrical":
+            (   field,
+                duration_field_interpolation,
+            ) = timer(InterpolatedField_Cylindrical)(
+                R_coord = q0,
+                Z_coord = q2,
+                B_R = B0,
+                B_T = B1,
+                B_Z = B2,
+                psi = psi,
+                interp_order = interp_order_int,
+                interp_smoothing = interp_smoothing,
+            )
+        else: # geometry == "cartesian":
+            (   field,
+                duration_field_interpolation,
+            ) = timer(InterpolatedField_Cartesian)(
+                X_coord = q0,
+                Y_coord = q1,
+                Z_coord = q2,
+                B_X = B0,
+                B_Y = B1,
+                B_Z = B2,
+                psi = psi,
+                interp_order = interp_order_str,
+            )
+
+        log.info(f"Interpolating B and poloidal flux profiles took {duration_field_interpolation}")
+
+        return field
     
-    else: raise ValueError(f"Invalid `find_B_method` = '{find_B_method}'")
+    else: raise ValueError(f"`find_B_method` = '{find_B_method}' is not supported")

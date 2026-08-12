@@ -42,9 +42,9 @@ def check_vector_pointing_into_plasma(q: FloatArray, vector: FloatArray, field: 
     q_XYZ_minus = q_XYZ - 0.01*unitv_XYZ
     q_XYZ_plus  = q_XYZ + 0.01*unitv_XYZ
 
-    polflux_at_q_minus = field.polflux_incart(*q_XYZ_minus)
-    polflux_at_q =       field.polflux_incart(*q_XYZ)
-    polflux_at_q_plus =  field.polflux_incart(*q_XYZ_plus)
+    polflux_at_q_minus = field.polflux_in_cartesian(*q_XYZ_minus)
+    polflux_at_q =       field.polflux_in_cartesian(*q_XYZ)
+    polflux_at_q_plus =  field.polflux_in_cartesian(*q_XYZ_plus)
 
     if polflux_at_q_minus < polflux_at_q < polflux_at_q_plus: raise ValueError(f"K_plasma is pointing out of the plasma!")
     elif polflux_at_q_plus < polflux_at_q < polflux_at_q_minus: pass
