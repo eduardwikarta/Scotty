@@ -1,9 +1,9 @@
+from __future__ import annotations
 import logging
 from math import isclose
 from multiprocessing.managers import ValueProxy
 import numpy as np
 from scipy import constants
-from scotty.checks_v4 import VALID_LAUNCH_MODE_FLAGS
 from scotty.logger_v4 import arr2str
 from scotty.typing import ArrayLike, Array, FloatArray, ComplexFloatArray
 from typing import Callable, Union, Tuple, Optional, List
@@ -668,7 +668,7 @@ def find_electron_mass(temperature: Optional[ArrayLike] = None) -> ArrayLike:
     factor = 1 if temperature is None else 1 + temperature * 4.892 * 10**(-3)
     return factor * constants.m_e
 
-def find_normalised_plasma_freq(launch_angular_freq: float, electron_density: ArrayLike, temperature: Optional[ArrayLike] = None) -> ArrayLike:
+def find_normalised_plasma_ang_freq(launch_angular_freq: float, electron_density: ArrayLike, temperature: Optional[ArrayLike] = None) -> ArrayLike:
     """
     Finds the plasma frequency, normalised to the angular frequency at launch
 
@@ -690,7 +690,7 @@ def find_normalised_plasma_freq(launch_angular_freq: float, electron_density: Ar
     m_e = find_electron_mass(temperature)
     return (constants.e * np.sqrt(electron_density * 10**19 / (constants.epsilon_0 * m_e))) / launch_angular_freq
 
-def find_normalised_gyro_freq(launch_angular_freq: float, B_total: ArrayLike, temperature: Optional[ArrayLike] = None) -> ArrayLike:
+def find_normalised_gyro_ang_freq(launch_angular_freq: float, B_total: ArrayLike, temperature: Optional[ArrayLike] = None) -> ArrayLike:
     """
     Finds the gyrofrequency, normalised to the angular frequency at launch
 
@@ -712,11 +712,12 @@ def find_normalised_gyro_freq(launch_angular_freq: float, B_total: ArrayLike, te
     m_e = find_electron_mass(temperature)
     return constants.e * B_total / (m_e * launch_angular_freq)
 
-def find_normalised_freqs(launch_angular_freq: float, B_total: ArrayLike, electron_density: ArrayLike, temperature: Optional[ArrayLike] = None) -> List[ArrayLike]:
+def find_normalised_angular_freqs(launch_angular_freq: float, B_total: ArrayLike, electron_density: ArrayLike, temperature: Optional[ArrayLike] = None) -> List[ArrayLike]:
     """
-    Finds the plasma frequency, gyrofrequency, left hand cutoff frequency,
-    right hand cutoff frequency, and upper hybrid frequency, all normalised
-    to the angular frequency at launch
+    Finds the electron plasma (angular) frequency, electron cyclotron
+    (angular) frequency, left-hand cutoff (angular) frequency, right-hand
+    cutoff (angular) frequency, and upper hybrid (angular) frequency, all
+    normalised to the angular frequency at launch
 
     Parameters
     ----------
@@ -733,26 +734,26 @@ def find_normalised_freqs(launch_angular_freq: float, B_total: ArrayLike, electr
 
     Returns
     ----------
-    normalised_plasma_freq : ArrayLike
+    w_pe : ArrayLike
         Normalised plasma frequency at the queried points in the plasma
-    normalised_gyro_freq : ArrayLike
+    w_ce : ArrayLike
         Normalised gyrofrequency at the queried points in the plasma
-    normalised_lefthand_cutoff : ArrayLike
+    w_LH : ArrayLike
         Normalised left hand cutoff frequency at the queried points in the
         plasma
-    normalised_righthand_cutoff : ArrayLike
+    w_RH : ArrayLike
         Normalised right hand cutoff frequency at the queried points in the
         plasma
-    normalised_upper_hybrid : ArrayLike
+    w_UH : ArrayLike
         Normalised upper hybrid frequency at the queried points in the
         plasma
     """
-    normalised_plasma_freq = find_normalised_plasma_freq(launch_angular_freq, electron_density, temperature)
-    normalised_gyro_freq = find_normalised_gyro_freq(launch_angular_freq, B_total, temperature)
-    normalised_lefthand_cutoff  = 0.5 * (-normalised_gyro_freq + np.sqrt(normalised_gyro_freq**2 + 4 * normalised_plasma_freq**2))
-    normalised_righthand_cutoff = 0.5 * ( normalised_gyro_freq + np.sqrt(normalised_gyro_freq**2 + 4 * normalised_plasma_freq**2))
-    normalised_upper_hybrid = np.sqrt(normalised_plasma_freq**2 + normalised_gyro_freq**2)
-    return [normalised_lefthand_cutoff, normalised_righthand_cutoff, normalised_upper_hybrid]
+    w_pe = find_normalised_plasma_ang_freq(launch_angular_freq, electron_density, temperature)
+    w_ce = find_normalised_gyro_ang_freq(launch_angular_freq, B_total, temperature)
+    w_LH = 0.5 * (-w_ce + np.sqrt(w_ce**2 + 4 * w_pe**2))
+    w_RH = 0.5 * ( w_ce + np.sqrt(w_ce**2 + 4 * w_pe**2))
+    w_UH = np.sqrt(w_pe**2 + w_ce**2)
+    return [w_pe, w_ce, w_LH, w_RH, w_UH]
 
 def find_epsilon_terms(
     launch_angular_freq: float, B_total: ArrayLike, electron_density: ArrayLike, temperature: Optional[ArrayLike] = None,
@@ -797,12 +798,12 @@ def find_epsilon_terms(
         is still the same
     """
     toreturn = []
-    normalised_plasma_freq = find_normalised_plasma_freq(launch_angular_freq, electron_density, temperature)
-    normalised_gyro_freq = find_normalised_gyro_freq(launch_angular_freq, B_total, temperature)
+    normalised_plasma_ang_freq = find_normalised_plasma_ang_freq(launch_angular_freq, electron_density, temperature)
+    normalised_gyro_ang_freq = find_normalised_gyro_ang_freq(launch_angular_freq, B_total, temperature)
 
-    if para: toreturn.append(1 - normalised_plasma_freq**2)
-    if perp: toreturn.append(1 - normalised_plasma_freq**2 / (1 - normalised_gyro_freq**2))
-    if g:    toreturn.append(normalised_plasma_freq**2 * normalised_gyro_freq / (1 - normalised_gyro_freq**2))
+    if para: toreturn.append(1 - normalised_plasma_ang_freq**2)
+    if perp: toreturn.append(1 - normalised_plasma_ang_freq**2 / (1 - normalised_gyro_ang_freq**2))
+    if g:    toreturn.append(normalised_plasma_ang_freq**2 * normalised_gyro_ang_freq / (1 - normalised_gyro_ang_freq**2))
     return toreturn
 
 def find_epsilon_para(launch_angular_freq: float, electron_density: ArrayLike, temperature: Optional[ArrayLike] = None) -> ArrayLike:
@@ -1087,6 +1088,7 @@ def find_H_Cardano_eigh(launch_angular_freq: float, K_magnitude: ArrayLike, epsi
     return np.squeeze(eigvals), np.squeeze(eigvecs)
 
 def find_mode_index_and_ehat(mode_flag: VALID_LAUNCH_MODE_FLAGS, H_Cardanos: FloatArray, ehats: ComplexFloatArray, tol_H: float = 1e-5, tol_O_mode_polarisation: float = 0.25) -> Tuple[int, float, ComplexFloatArray]:
+    from scotty.checks_v4 import VALID_LAUNCH_MODE_FLAGS
     """
     Given an array `H_Cardanos` of shape (3,) and an array of `ehats` of
     shape (3,3) where `H_Cardanos[i]` corresponds to `ehats[:,i]`, choose
