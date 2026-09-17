@@ -4,7 +4,7 @@ from scipy.integrate import solve_ivp
 from scipy.integrate._ivp.ivp import OdeSolution
 from scipy.optimize import minimize_scalar
 from scotty.checks_v4 import VALID_SOLVER_STATUS
-from scotty.fun_general_v4 import find_normalised_gyro_freq, find_K_magnitude
+from scotty.fun_general_v4 import find_normalised_gyro_ang_freq, find_K_magnitude
 from scotty.geometry_v4 import MagneticField_Cartesian, MagneticField_Cylindrical
 from scotty.hamiltonian_v4 import Hamiltonian
 from scotty.logger_v4 import timer
@@ -90,7 +90,7 @@ def make_solver_events(
         B_magnitude = field.magnitude(q0, q1, q2)
 
         # Find the ratio of beam freq to electron cyclotron freq
-        gyro_freq = find_normalised_gyro_freq(launch_angular_frequency, B_magnitude)
+        gyro_freq = find_normalised_gyro_ang_freq(launch_angular_frequency, B_magnitude)
 
         # Find the difference. If the sign changes, it means the resonance
         # frequency has been crossed
@@ -108,7 +108,7 @@ def make_solver_events(
         B_magnitude = field.magnitude(q0, q1, q2)
 
         # Find the ratio of beam freq to electron cyclotron freq
-        gyro_freq = find_normalised_gyro_freq(launch_angular_frequency, B_magnitude)
+        gyro_freq = find_normalised_gyro_ang_freq(launch_angular_frequency, B_magnitude)
 
         # Find the difference. If the sign changes, it means the resonance
         # frequency has been crossed. We want 0.5, because the second

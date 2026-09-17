@@ -22,6 +22,7 @@ def inputs_to_dataset(params: Parameters, field: VALID_FIELDS) -> xr.Dataset:
         "mode_flag": params.mode_flag_launch,
 
         # Solver settings and finite-difference parameters
+        "benchmarking_flag": params.benchmarking_flag,
         "ray_tracing_flag": params.ray_tracing_flag,
         "launch_flag": params.launch_flag,
         "boundary_flag": params.boundary_flag,
@@ -79,19 +80,30 @@ def inputs_to_dataset(params: Parameters, field: VALID_FIELDS) -> xr.Dataset:
 
     return inputs_ds
 
-def solver_to_dataset(params: Parameters, field: VALID_FIELDS) -> xr.Dataset:
+def solver_outputs_to_dataset(params: Parameters, field: VALID_FIELDS) -> xr.Dataset:
 
     cart = params.cartesian_flag
-    ray_tracing_flag = params.ray_tracing_flag
+    rtf = params.ray_tracing_flag
 
     solver_ds = xr.Dataset({
-            "solver_status": params.solver_status,
-            "tau_array": params.tau_output,
-            "a": 1,
-            }.update({} if ray_tracing_flag else {
-            "": 1,
+        # General information
+        "solver_status": params.solver_status,
+        "solver_nfev": params.solver_nfev,
+        "solver_duration": params.solver_duration,
+
+        # Ray-tracing output
+        "q_output_cartesian": (["tau", "row"], params.q_output_cartesian),
+
+
+
+        }.update({} if ray_tracing_flag else {
+        "": 1,
         }),
         coords = {
-            "a": 1,
+            "tau": params.tau_output,
+            "row_cart": ["X","Y","Z"],
+            "row_cyld": ["R","zeta","Z"],
+            "col_cart": ["X","Y","Z"],
+            "col_cyld": ["R","zeta","Z"],
         },
     )

@@ -4,7 +4,7 @@ from scipy.optimize import newton
 from scotty.checks_v4 import VALID_BOUNDARY_FLAGS, VALID_FIELDS, MagneticField_Cylindrical, MagneticField_Cartesian
 from scotty.fun_general_v4 import (
     angular_frequency_to_wavenumber,
-    find_normalised_freqs,
+    find_normalised_angular_freqs,
     find_q_labframe_cyl_to_cart,
     find_vector_and_q_cyl_to_cart,
     find_q_labframe_cart_to_cyl,
@@ -138,7 +138,7 @@ def find_K_plasma(
             normalised_LH_cutoff_freq,
             normalised_RH_cutoff_freq,
             normalised_UH_freq,
-        ) = find_normalised_freqs(angular_freq, B_magnitude, electron_density_p, temperature)
+        ) = find_normalised_angular_freqs(angular_freq, B_magnitude, electron_density_p, temperature)
 
         log.debug(f"""
         Finding K at the plasma entry point with {boundary_flag} boundary conditions

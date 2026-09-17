@@ -19,6 +19,58 @@ from matplotlib.widgets import Slider
 from scotty.fun_general import find_q_lab_Cartesian
 
 
+
+# MY OWN STUFF
+def plot_H_eigvals_for_Happel_2017(
+    dt: DataTree, filename: str,
+) -> plt.Axes:
+
+    mode_idx = int(dt["analysis"]["mode_index"][()])
+    tau = np.array((dt["solver_output"]["tau"][()]))
+    all_H = np.array((dt["analysis"]["H_eigvals"][()]))
+    H_0 = all_H[:,0]
+    H_1 = all_H[:,1]
+    H_2 = all_H[:,2]
+
+    fig, axs = plt.subplots()
+    axs.plot(tau, H_0, label="H_0")
+    axs.plot(tau, H_1, label="H_1")
+    axs.plot(tau, H_2, label="H_2")
+    axs.set_xlabel("tau")
+    axs.set_ylabel("H")
+    axs.set_title(f"H_eigvals; mode_index selected = {mode_idx}")
+    axs.legend()
+    if filename: plt.savefig(f"{filename}.png")
+    plt.close()
+
+
+
+    
+def plot_loc_s_for_Happel_2017(
+    dt: DataTree, filename: str,
+) -> plt.Axes:
+
+    abs_k_perp_1_bs = np.abs(dt["analysis"]["k_perp_1_bs"][()]) / 100 # for cm-1
+    loc_s = dt["analysis"]["loc_s"][()]
+
+    abs_k_perp_1_bs_binormal = np.abs(dt["analysis"]["k_perp_1_bs_binormal"][()]) / 100 # for cm-1
+    loc_s_binormal = dt["analysis"]["loc_s_binormal"][()]
+
+    fig, axs = plt.subplots()
+    axs.loglog(abs_k_perp_1_bs, loc_s, color="black", marker=None, label="k_perp_1_bs")
+    axs.loglog(abs_k_perp_1_bs_binormal, loc_s_binormal, color="blue", marker=None, label="k_perp_1_bs_binormal")
+    axs.set_xlabel("|k_perp| (cm-1)")
+    axs.set_ylabel("S(k_perp) or loc_s")
+    axs.set_title("loc_s (k_perp and k_perp_binormal) vs. k_perp and k_perp_binormal")
+    axs.legend()
+    if filename: plt.savefig(f"{filename}.png")
+    plt.close()
+
+
+
+
+
+
 def maybe_make_axis(ax: Optional[plt.Axes], *args, **kwargs) -> plt.Axes:
     if ax is None:
         _, ax = plt.subplots(*args, **kwargs)
@@ -301,7 +353,8 @@ def plot_dispersion_relation(
         label="H_3_Cardano (O?)",
     )
 
-    ax.set_title("Dispersion relation")
+    mode_index = analysis["mode_index"]
+    ax.set_title(f"Dispersion relation; mode_index selected = {mode_index}")
     ax.legend()
 
     if filename:
@@ -311,7 +364,7 @@ def plot_dispersion_relation(
 
 
 def plot_poloidal_beam_path(
-    dt: DataTree,
+    dt,#: DataTree,
     filename: Optional[PathLike] = None,
     ax: Optional[plt.Axes] = None,
     zoom=False,

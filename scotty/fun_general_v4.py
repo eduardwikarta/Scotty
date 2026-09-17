@@ -616,7 +616,7 @@ def find_inverse_2D(matrix_2D: Array) -> Array:
     matrix_2D_inverse[1, 0] = -matrix_2D[1, 0] / det
     return matrix_2D_inverse
 
-def find_K_magnitude(cartesian: bool, K0: ArrayLike, K1: ArrayLike, K2: ArrayLike, q0: ArrayLike) -> ArrayLike:
+def find_K_magnitude(cartesian: bool, K0: ArrayLike, K1: ArrayLike, K2: ArrayLike, q0: ArrayLike) -> FloatArray:
     """
     Find the magnitude of the wavevector. If in cylindrical geometry (i.e.
     `K_lab_cyl`) then account for the fact that `K_lab_cyl[1]` is the

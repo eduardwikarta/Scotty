@@ -71,7 +71,6 @@ def beam_me_up(
     # Logging flags
     console_log_level: Union[str, int] = "INFO", # For returning log messages on console
     file_log_level: Optional[Union[str, int]] = None, # For returning log messages on a log file
-    # TO REMOVE -- need to put one more argument for log name
 
     # Plotting flags
     figure_flag: bool = True,
@@ -80,8 +79,9 @@ def beam_me_up(
     # TO REMOVE -- need to put individual flags for each plot
 
     # Additional flags
-    ray_tracing_flag: bool = False,     # For quick runs (only ray tracing)
-    return_dt_field: bool = False, # For returning the datatree, field class, and Hamiltonians
+    benchmarking_flag: bool = False,
+    ray_tracing_flag: bool = False,
+    return_dt_field: bool = False, # For returning the datatree, field class
 
     # Keeping the extra kwargs for parsing later
     **kwargs,
@@ -329,10 +329,10 @@ def beam_me_up(
     )
 
     if params.ray_tracing_flag: # if ray_tracing_flag, then ray_tracing_result is 2-tuple of (tau_arr, q_K_arrs)
-        solver_status, solver_nfev, solver_duration, tau_output, q_K_output = cast(Tuple[Literal[1, 0, -1], int, float, FloatArray, FloatArray], ray_tracing_result)
-        q_output = q_K_output[:3] # (3, N)
-        K_output = q_K_output[3:] # (3, N)
-        Psi_3D_output_labframe = None
+        params.solver_status, params.solver_nfev, params.solver_duration, params.tau_output, q_K_output = cast(Tuple[Literal[1, 0, -1], int, float, FloatArray, FloatArray], ray_tracing_result)
+        params.q_output = q_K_output[:3].T # (N, 3)
+        params.K_output = q_K_output[3:].T # (N,3 )
+        params.Psi_3D_output_labframe = None
     else: # otherwise just take the tau_array with tau of terminating event and pass into beam-tracing
         _, _, _, tau_points, tau_terminating_event = cast(Tuple[Literal[1, 0, -1], int, float, FloatArray, float], ray_tracing_result)
 
@@ -344,13 +344,13 @@ def beam_me_up(
     ##################################################
     """)
 
-        (   solver_status,
-            solver_nfev,
-            solver_duration,
-            tau_output, # (N,)
-            q_output, # (3, N)
-            K_output, # (3, N)
-            Psi_3D_output_labframe, # (N, 3, 3)
+        (   params.solver_status,
+            params.solver_nfev,
+            params.solver_duration,
+            params.tau_output, # (N,)
+            params.q_output, # (N, 3)
+            params.K_output, # (N, 3)
+            params.Psi_3D_output_labframe, # (N, 3, 3)
         ) = beam_tracing(
             tau_leave = tau_terminating_event,
             tau_points = tau_points,
@@ -361,28 +361,17 @@ def beam_me_up(
             rtol = params.rtol,
             atol = params.atol,
         )
-    
-    return solver_status, tau_output, q_output, K_output, Psi_3D_output_labframe
+
+    # TO REMOVE 14 Sep 26 -- this is for benchmarking
+    if benchmarking_flag: return params.solver_status, params.tau_output, params.q_output.T, params.K_output.T, params.Psi_3D_output_labframe
+
+    # Coordinate conversions for later
+    params.coordinate_conversions()
 
     # Once the ray/beam-tracing is complete, save the data in params
-    # We make the code agnostic, e.g. Psi_3D is generated as an array
-    # for both ray- and beam-tracing, where for the former it is an
-    # array of None and the latter a complex-valued array
+    # as xarray datasets
 
-    params.solver_status = solver_status
-    params.solver_nfev = solver_nfev
-    params.solver_duration = solver_duration
-
-    params.tau_output = tau_output # (N,)
-
-    params.q_output = q_output.T # (3, N) -> (N, 3)
-    # q_mag = np.linalg.norm(params.q_output, axis=1) # (N,)
-
-    params.K_output = ( K_output / 1 if params.cartesian_flag else np.array([1, q_output[0], 1])[:, np.newaxis] ).T # (3, N) -> (N, 3)
-    params.K_output_mag = find_K_magnitude(params.cartesian_flag, *K_output, q_output[0]) # (N,)
-    params.K_output_hat = params.K_output / params.K_output_mag[:, np.newaxis] # (3, N) -> (N, 3)
-
-    params.Psi_3D_output_labframe = Psi_3D_output_labframe
+    
 
 
 

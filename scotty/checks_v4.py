@@ -1,7 +1,18 @@
 from dataclasses import dataclass
 import logging
 from pathlib import Path
-from scotty.fun_general_v4 import freq_GHz_to_angular_frequency, angular_frequency_to_wavenumber
+from scotty.fun_general import find_q_lab_Cartesian
+from scotty.fun_general_v4 import (
+    find_K_labframe_cart_to_cyl,
+    find_K_labframe_cyl_to_cart,
+    find_K_magnitude,
+    find_Psi_3D_labframe_cart_to_cyl,
+    find_Psi_3D_labframe_cyl_to_cart,
+    find_q_labframe_cart_to_cyl,
+    find_q_labframe_cyl_to_cart,
+    freq_GHz_to_angular_frequency,
+    angular_frequency_to_wavenumber
+)
 from scotty.geometry_v4 import MagneticField_Cylindrical, MagneticField_Cartesian
 from scotty.profile_fit import ProfileFitLike
 from scotty.typing import FloatArray, ComplexFloatArray
@@ -33,32 +44,38 @@ log = logging.getLogger(__name__)
 class Parameters:
     # Initialisating here to stop type checker from complaining
     geometry: VALID_GEOMETRIES
-    cartesian: bool
-    mode_flag_launch: VALID_LAUNCH_MODE_FLAGS
-    mode_flag_initial: Literal[1,-1]
+    cartesian_flag: bool
     launch_flag: VALID_LAUNCH_FLAGS
     boundary_flag: VALID_BOUNDARY_FLAGS
+    mode_flag_launch: VALID_LAUNCH_MODE_FLAGS
+    mode_flag_initial: Literal[1,-1]
+    mode_index: int
+    e_hat_initial: ComplexFloatArray
 
+    # miscellaneous
     solver_status: VALID_SOLVER_STATUS
     solver_nfev: int
     solver_duration: float
     tau_output: FloatArray
+
+    # position vectors
     q_initial: FloatArray
     q_output: FloatArray
+    distance_from_launch_to_entry: Optional[float]
+
+    # wavevectors
     K_launch: Optional[FloatArray]
     K_initial: FloatArray
     K_output: FloatArray
-    K_output_mag: FloatArray
-    K_output_hat: FloatArray
+    K_output_magnitude: FloatArray
+    K_hat_output_cartesian: FloatArray
+
+    # beam matrices
     Psi_3D_launch_labframe: Optional[ComplexFloatArray]
     Psi_3D_entry_labframe: Optional[ComplexFloatArray]
     Psi_3D_initial_labframe: Optional[ComplexFloatArray]
     Psi_3D_output_labframe: Optional[ComplexFloatArray]
-    distance_from_launch_to_entry: Optional[float]
-    e_hat_initial: ComplexFloatArray
-    mode_flag_initial: Literal[1, -1]
-    mode_index: int
-    
+
     def __init__(self,
         
         # Main parameters
@@ -110,8 +127,9 @@ class Parameters:
         detailed_analysis_flag: bool,
 
         # Additional flags
+        benchmarking_flag: bool,
         ray_tracing_flag: bool,
-        return_dt_field: bool,
+        # return_dt_field: bool,
 
         # Extra kwargs for parsing
         **kwargs,
@@ -154,6 +172,7 @@ class Parameters:
         #
         ##################################################
 
+        self.benchmarking_flag = benchmarking_flag
         self.ray_tracing_flag = ray_tracing_flag
         self.launch_flag = launch_flag
         self.boundary_flag = boundary_flag
@@ -364,7 +383,75 @@ class Parameters:
             # ne_data_radialcoord_array = ne_data[1::2]
         else: self.ne_filename = None
 
+    def coordinate_conversions(self):
+        if self.cartesian_flag:
+            # position vectors
+            self.q_launch_cartesian = self.q_launch # (3,)
+            self.q_launch_cylindrical = find_q_labframe_cart_to_cyl(self.q_launch_cartesian)
+            self.q_initial_cartesian = self.q_initial # (3,)
+            self.q_initial_cylindrical = find_q_labframe_cart_to_cyl(self.q_initial_cartesian)
+            self.q_output_cartesian = self.q_output # (N,3)
+            self.q_output_cylindrical = find_q_labframe_cart_to_cyl(self.q_output_cartesian.T).T
 
+            # wavevectors
+            self.K_launch_cartesian = self.K_launch # (3,)
+            self.K_launch_cylindrical = find_K_labframe_cart_to_cyl(self.K_launch_cartesian, self.q_launch_cartesian)
+            self.K_initial_cartesian = self.K_initial # (3,)
+            self.K_initial_cylindrical = find_K_labframe_cart_to_cyl(self.K_initial_cartesian, self.q_initial_cartesian)
+            self.K_output_cartesian = self.K_output # (N,3)
+            self.K_output_cylindrical = find_K_labframe_cart_to_cyl(self.K_output_cartesian.T, self.q_output_cartesian.T).T
+
+            # beam matrices
+            if self.ray_tracing_flag:
+                self.Psi_3D_launch_labframe_cartesian = self.Psi_3D_launch_labframe # (3,3)
+                self.Psi_3D_launch_labframe_cylindrical = find_Psi_3D_labframe_cart_to_cyl(self.Psi_3D_launch_labframe_cartesian, self.K_launch_cartesian, self.q_launch_cartesian)
+                self.Psi_3D_entry_labframe_cartesian = self.Psi_3D_entry_labframe # (3,3)
+                self.Psi_3D_entry_labframe_cylindrical = find_Psi_3D_labframe_cart_to_cyl(self.Psi_3D_entry_labframe_cartesian, self.K_launch_cartesian, self.q_initial_cartesian)
+                self.Psi_3D_initial_labframe_cartesian = self.Psi_3D_initial_labframe # (3,3)
+                self.Psi_3D_initial_labframe_cylindrical = find_Psi_3D_labframe_cart_to_cyl(self.Psi_3D_initial_labframe_cartesian, self.K_initial_cartesian, self.q_initial_cartesian)
+                self.Psi_3D_output_labframe_cartesian = self.Psi_3D_output_labframe # (N,3,3)
+                self.Psi_3D_output_labframe_cylindrical = find_Psi_3D_labframe_cart_to_cyl(self.Psi_3D_output_labframe_cartesian, self.K_output_cartesian.T, self.q_output_cartesian.T)
+        
+        else: # elif not self.cartesian_flag:
+            # position vectors
+            self.q_launch_cylindrical = self.q_launch # (3,)
+            self.q_launch_cartesian = find_q_labframe_cyl_to_cart(self.q_launch_cylindrical)
+            self.q_initial_cylindrical = self.q_initial # (3,)
+            self.q_initial_cartesian = find_q_labframe_cyl_to_cart(self.q_initial_cylindrical)
+            self.q_output_cylindrical = self.q_output # (N,3)
+            self.q_output_cartesian = find_q_labframe_cyl_to_cart(self.q_output_cylindrical.T).T
+
+            # wavevectors
+            self.K_launch_cylindrical = self.K_launch # (3,)
+            self.K_launch_cartesian = find_K_labframe_cyl_to_cart(self.K_launch_cylindrical, self.q_launch_cylindrical)
+            self.K_initial_cylindrical = self.K_initial # (3,)
+            self.K_initial_cartesian = find_K_labframe_cyl_to_cart(self.K_initial_cylindrical, self.q_initial_cylindrical)
+            self.K_output_cylindrical = self.K_output # (N,3)
+            self.K_output_cartesian = find_K_labframe_cyl_to_cart(self.K_output_cylindrical.T, self.q_output_cylindrical.T).T
+
+            # beam matrices
+            if self.ray_tracing_flag:
+                self.Psi_3D_launch_labframe_cylindrical = self.Psi_3D_launch_labframe # (3,3)
+                self.Psi_3D_launch_labframe_cartesian = find_Psi_3D_labframe_cyl_to_cart(self.Psi_3D_launch_labframe_cylindrical, self.K_launch_cylindrical, self.q_launch_cylindrical)
+                self.Psi_3D_entry_labframe_cylindrical = self.Psi_3D_entry_labframe # (3,3)
+                self.Psi_3D_entry_labframe_cartesian = find_Psi_3D_labframe_cyl_to_cart(self.Psi_3D_entry_labframe_cylindrical, self.K_launch_cylindrical, self.q_initial_cylindrical)
+                self.Psi_3D_initial_labframe_cylindrical = self.Psi_3D_initial_labframe # (3,3)
+                self.Psi_3D_initial_labframe_cartesian = find_Psi_3D_labframe_cyl_to_cart(self.Psi_3D_initial_labframe_cylindrical, self.K_initial_cylindrical, self.q_initial_cylindrical)
+                self.Psi_3D_output_labframe_cylindrical = self.Psi_3D_output_labframe # (N,3,3)
+                self.Psi_3D_output_labframe_cartesian = find_Psi_3D_labframe_cyl_to_cart(self.Psi_3D_output_labframe_cylindrical, self.K_output_cylindrical.T, self.q_output_cylindrical.T)
+
+        self.K_output_magnitude = find_K_magnitude(True, *self.K_output_cartesian.T, self.q_output_cartesian.T[0]) # (N,)
+        self.K_hat_output_cartesian = self.K_output_cartesian / self.K_output_magnitude[:, np.newaxis]
+        
+        if not self.ray_tracing_flag:
+            self.Psi_3D_launch_labframe_cartesian = None
+            self.Psi_3D_launch_labframe_cylindrical = None
+            self.Psi_3D_entry_labframe_cartesian = None
+            self.Psi_3D_entry_labframe_cylindrical = None
+            self.Psi_3D_initial_labframe_cartesian = None
+            self.Psi_3D_initial_labframe_cylindrical = None
+            self.Psi_3D_output_labframe_cartesian = None
+            self.Psi_3D_output_labframe_cylindrical = None
 
 ##################################################
 #

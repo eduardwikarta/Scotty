@@ -42,7 +42,7 @@ def pack_beam_parameters(q: FloatArray, K: FloatArray, Psi: ComplexFloatArray) -
 
 
 
-def unpack_beam_parameters(q_K_RePsi_ImPsi_arr: FloatArray) -> Tuple[FloatArray, FloatArray, ComplexFloatArray]:
+def unpack_beam_parameters(q_K_RePsi_ImPsi_arr: FloatArray, transpose_flag: bool = False) -> Tuple[FloatArray, FloatArray, ComplexFloatArray]:
 
     """Unpacks `q_K_RePsi_ImPsi_arr` of shape `(18, N)` back into
     `q` (shape `(3, N)`), `K` (shape `(3, N)`), and `Psi` (shape `(N, 3, 3)`)"""
@@ -61,7 +61,8 @@ def unpack_beam_parameters(q_K_RePsi_ImPsi_arr: FloatArray) -> Tuple[FloatArray,
         Psi[:, I, J] = Psi_upper.T
         Psi[:, J, I] = Psi[:, I, J]
 
-    return q, K, Psi
+    if transpose_flag: return q.T, K.T, Psi # (N,3), (N,3), (N,3,3)
+    else:              return q,   K,   Psi # (3,N), (3,N), (N,3,3)
 
 
 
@@ -136,4 +137,4 @@ def beam_tracing(
         Time per beam evolution evaluation: {duration_beam_solver / solver_beam_output.nfev}
     """)
 
-    return solver_beam_output.status, solver_beam_output.nfev, duration_beam_solver, solver_beam_output.t, *unpack_beam_parameters(solver_beam_output.y)
+    return solver_beam_output.status, solver_beam_output.nfev, duration_beam_solver, solver_beam_output.t, *unpack_beam_parameters(solver_beam_output.y, transpose_flag=True)
