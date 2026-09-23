@@ -378,7 +378,7 @@ def beam_me_up(
         Psi_w[:, 0, 0] = dot(_x_hat, dot(params.Psi_3D_output_labframe, _x_hat))
         Psi_w[:, 0, 1] = Psi_w[:, 1, 0] = dot(_x_hat, dot(params.Psi_3D_output_labframe, _y_hat))
         Psi_w[:, 1, 1] = dot(_y_hat, dot(params.Psi_3D_output_labframe, _y_hat))
-        return params.solver_status, params.tau_output, params.q_output.T, params.K_output.T, params.Psi_3D_output_labframe, (_g_hat, _x_hat, _y_hat), Psi_w
+        return field, params.solver_status, params.tau_output, params.q_output.T, params.K_output.T, params.Psi_3D_output_labframe, (_g_hat, _x_hat, _y_hat), Psi_w
 
     # Coordinate conversions for later
     params.coordinate_conversions()

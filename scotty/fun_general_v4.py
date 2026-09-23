@@ -1250,14 +1250,49 @@ def find_beam_widths_and_curvs(Psi_w: ComplexFloatArray, K_vec: FloatArray, g_ha
     """
 
     Re_Psi_w = np.real(Psi_w)
-    Re_Psi_w_eigvals = np.linalg.eigvalsh(Re_Psi_w)
+    Re_Psi_w_eigvals, Re_Psi_w_eigvecs = np.linalg.eigh(Re_Psi_w) # (N,2) and (N,2,2)
+    Re_Psi_w_eigvals = check_eigval_order(Re_Psi_w_eigvals, Re_Psi_w_eigvecs) # type: ignore
     K_mag = np.linalg.norm(K_vec, axis=1)
     K_g_mag = np.sum(K_vec * g_hat, axis=1)
     curvs = np.squeeze((K_g_mag**2 / K_mag**3)[:, np.newaxis] * Re_Psi_w_eigvals)
 
     Im_Psi_w = np.imag(Psi_w)
-    Im_Psi_w_eigvals = np.linalg.eigvalsh(Im_Psi_w)
+    Im_Psi_w_eigvals, Im_Psi_w_eigvecs = np.linalg.eigh(Im_Psi_w)
+    Im_Psi_w_eigvals = check_eigval_order(Im_Psi_w_eigvals, Im_Psi_w_eigvecs) # type: ignore
     widths = np.squeeze(np.sqrt( np.full(Im_Psi_w_eigvals.shape, 2) / Im_Psi_w_eigvals ))
 
     if curvs.ndim == 1: return curvs[0], curvs[1], widths[0], widths[1]
     else:               return curvs[:, 0], curvs[:, 1], widths[:, 0], widths[:, 1]
+
+def check_eigval_order(eigvals: FloatArray, eigvecs: FloatArray, diff_tol: float = 0.1) -> Tuple[FloatArray]:
+    """
+    Check if the eigenvalues are correctly ordered by comparing
+    each eigenvector of `eigvec1`
+
+    Parameters
+    ----------
+    eigvals : (N,2) FloatArray
+    eigvecs : (N,2,2) FloatArray
+        Note that the eigenvector `e_vec[:,:,i]` is the eigenvector
+        of the i-th eigenvalue `e_val[:,i]`
+
+    Returns
+    ----------
+    eigvals_sorted : (N,2) FloatArray
+        Correctly ordered array of eigenvalues
+    """
+    eigval1 = eigvals[:,0]
+    eigval2 = eigvals[:,1]
+    eigvec1 = eigvecs[:,:,0].T # (2, N)  
+    arr1 = eigvec1[:-1] # (2, N-1)
+    arr2 = eigvec1[1:]  # (2, N-1)
+    diff = np.linalg.norm(arr1-arr2, axis=0) # (N-1,)
+    diff_mask = np.where(diff < diff_tol)[0]
+    if diff_mask.shape == (0,):
+        for i in diff_mask:
+            idx = i+1
+            _temp = eigval1[idx:]
+            eigval1[idx:] = eigval2[idx:]
+            eigval2[idx:] = _temp
+
+    return np.array([eigval1, eigval2]).T # (N, 2)

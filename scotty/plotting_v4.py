@@ -3,10 +3,95 @@ import plotly.graph_objects as pgo
 import plotly.io as pio
 from scotty.geometry_v4 import MagneticField_Cartesian, MagneticField_Cylindrical
 from scotty.typing import FloatArray
-from typing import Union, Tuple
+from typing import Union, Tuple, Optional
+
+
+
+def make_fig_if_None(existing_fig: Optional[pgo.Figure] = None) -> pgo.Figure:
+    fig = pgo.Figure() if existing_fig is None else existing_fig
+    return fig
+
+
+
+def plot_3d_flux_surfaces(
+    field: Union[MagneticField_Cartesian, MagneticField_Cylindrical],
+    xlims: Optional[Tuple[float, float, float]] = (0, 2.5, 101),
+    ylims: Optional[Tuple[float, float, float]] = (-0.5, 0.5, 41),
+    zlims: Optional[Tuple[float, float, float]] = (-1.5, 1.5, 121),
+    existing_fig: Optional[pgo.Figure] = None,
+    use_rho: bool = False,
+    show_graph: bool = False,
+    show_in_browser: bool = False,
+    show_axes: bool = True,
+) -> pgo.Figure:
+
+    # if isinstance(field, MagneticField_Cartesian):
+    X = field.X_coord if xlims is None else np.linspace(*xlims) # type: ignore
+    Y = field.Y_coord if ylims is None else np.linspace(*ylims) # type: ignore
+    # else: # elif isinstance(field, MagneticField_Cylindrical):
+    #     X = field.R_coord if xlims is None else np.linspace(*xlims) # type: ignore
+    #     Y = np.linspace(-0.5, 0.5, 41) if ylims is None else np.linspace(*ylims) # type: ignore
+    
+    Z = field.Z_coord if zlims is None else np.linspace(*zlims) # type: ignore
+    XX, YY, ZZ = np.meshgrid(X, Y, Z, indexing="ij")
+    flux_coord = np.sqrt(field.polflux_in_cartesian(XX, YY, ZZ)) if use_rho else field.polflux_in_cartesian(XX, YY, ZZ)
+
+    # masking to remove NaNs and outside LCFS, to see if we can speed up plotting time
+    # flux_threshold = 1.0 + 0.1 # leave this here just in case we want to implement this in the future
+    mask = np.isfinite(flux_coord) # & (flux_coord <= flux_threshold) # masking like this prevents plotly from plotting, see if can fix
+    XX = XX[mask]
+    YY = YY[mask]
+    ZZ = ZZ[mask]
+    flux_coord = flux_coord[mask]
+
+    fig = make_fig_if_None(existing_fig)
+
+    fig.add_trace(pgo.Isosurface(
+        x=XX.ravel(),
+        y=YY.ravel(),
+        z=ZZ.ravel(),
+        value=flux_coord.ravel(),
+        isomin=0.0,
+        isomax=1.0,
+        surface_count=11,
+        opacity=0.1,
+        colorscale="plasma_r",
+        caps={"x_show": show_axes, "y_show": show_axes, "z_show": show_axes},
+        name=f"Flux surfaces, {r'$\rho_n' if use_rho else r'$\psi_n$'}",
+        colorbar={
+            "title": {
+                "text": r"$\rho_n$" if use_rho else r"$\psi_n$",
+                "side": "top",
+            },
+            "thickness": 10, "len": 0.7,
+        }
+    ))
+
+    fig.update_layout(
+        title="Testing",
+        scene=dict(
+            xaxis_title="X (m)",
+            yaxis_title="Y (m)",
+            zaxis_title="Z (m)",
+            xaxis=dict(range=xlims[:2]),
+            yaxis=dict(range=ylims[:2]),
+            zaxis=dict(range=zlims[:2]),
+            aspectmode="data",
+        ),
+        width=900,
+        height=700
+    )
+
+    if show_graph:
+        if show_in_browser: pio.renderers.default = "browser"
+        fig.update_layout(showlegend=True)
+        fig.show()
+
+    return fig
+
+
 
 def plot_3d_beam(
-    field: Union[MagneticField_Cartesian, MagneticField_Cylindrical],
     q_X: FloatArray,
     q_Y: FloatArray,
     q_Z: FloatArray,
@@ -15,14 +100,15 @@ def plot_3d_beam(
     n_hat: FloatArray,
     b_hat: FloatArray,
     theta_resolution: int = 60,
+    existing_fig: Optional[pgo.Figure] = None,
+    show_graph: bool = True,
     show_in_browser: bool = True,
-    xlims: Tuple[float, float] = (0.5, 2.5),
-    ylims: Tuple[float, float] = (-0.5, 0.5),
-    zlims: Tuple[float, float] = (-1, 1),
-):
+) -> pgo.Figure:
     """
     Vectorised 3D beam visualization using Plotly Mesh3d
     
+    field : MagneticField_Cartesian or MagneticField_Cylindrical
+        Magnetic field class
     q_X, q_Y, q_Z : (N,) FloatArray
         Central ray coordinates
     widths_N, widths_B : (N,) FloatArray
@@ -31,6 +117,12 @@ def plot_3d_beam(
         N(ormal) and B(inormal) unit vectors
     theta_resolution : int
         Angular resolution in the beam cross-section
+    xlims, ylims, zlims : Tuple
+        Three element tuple containing (`min`, `max`, `num_step`)
+    existing_fig : pgo.Figure or None
+        If `pgo.Figure`, add the trace there; otherwise, create a new plotly figure
+    show_graph : bool
+        If True, display the graph
     show_in_browser : bool
         If True, then the graph is displayed in the browser
     """
@@ -69,12 +161,7 @@ def plot_3d_beam(
     t_k = np.concatenate([tri_map(I+1, J+1), tri_map(I+1, J)])
 
     # Some plotly stuff
-    if show_in_browser: pio.renderers.default = "browser"
-    fig = pgo.Figure()
-
-    # Plot flux surfaces
-    # remember to set alpha=0.5 or sth
-    # <--- TO DO
+    fig = make_fig_if_None(existing_fig)
 
     # Plot central ray
     fig.add_trace(pgo.Scatter3d(
@@ -99,18 +186,61 @@ def plot_3d_beam(
         name="1/e Beam (plasma)"
     ))
 
-    fig.update_layout(
-        title="Testing",
-        scene=dict(
-            xaxis_title="X (m)",
-            yaxis_title="Y (m)",
-            zaxis_title="Z (m)",
-            xaxis=dict(range=xlims),
-            yaxis=dict(range=ylims),
-            zaxis=dict(range=zlims),
-        ),
-        width=900,
-        height=700
+    if show_graph:
+        if show_in_browser: pio.renderers.default = "browser"
+        fig.update_layout(showlegend=True)
+        fig.show()
+
+    return fig
+
+
+
+def plot_3d_beam_in_plasma(
+    field: Union[MagneticField_Cartesian, MagneticField_Cylindrical],
+    q_X: FloatArray,
+    q_Y: FloatArray,
+    q_Z: FloatArray,
+    widths_N: FloatArray,
+    widths_B: FloatArray,
+    n_hat: FloatArray,
+    b_hat: FloatArray,
+    theta_resolution: int = 60,
+    xlims: Tuple[float, float, float] = (0, 2.5, 101),
+    ylims: Tuple[float, float, float] = (-0.5, 0.5, 41),
+    zlims: Tuple[float, float, float] = (-1.5, 1.5, 121),
+    existing_fig: Optional[pgo.Figure] = None,
+    use_rho: bool = False,
+    show_graph: bool = True,
+    show_in_browser: bool = True,
+    show_axes: bool = True,
+) -> pgo.Figure:
+
+    fig = make_fig_if_None(existing_fig)
+
+    fig = plot_3d_flux_surfaces(
+        field=field,
+        xlims=xlims,
+        ylims=ylims,
+        zlims=zlims,
+        existing_fig=fig,
+        use_rho=use_rho,
+        show_axes=show_axes,
+        show_graph=True,
+        show_in_browser=True,
     )
 
-    fig.show()
+    fig = plot_3d_beam(
+        q_X=q_X,
+        q_Y=q_Y,
+        q_Z=q_Z,
+        widths_N=widths_N,
+        widths_B=widths_B,
+        n_hat=n_hat,
+        b_hat=b_hat,
+        theta_resolution=theta_resolution,
+        existing_fig=fig,
+        show_graph=show_graph,
+        show_in_browser=show_in_browser,
+    )
+
+    return fig
