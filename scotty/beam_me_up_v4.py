@@ -4,7 +4,8 @@ import numpy as np
 import pathlib
 from scotty.beam_solver_v4 import beam_tracing
 from scotty.checks_v4 import VALID_GEOMETRIES, VALID_LAUNCH_FLAGS, VALID_LAUNCH_MODE_FLAGS, VALID_BOUNDARY_FLAGS, Parameters, check_input_before_ray_tracing
-from scotty.fun_general_v4 import find_K_magnitude
+from scotty.fun_general import make_unit_vector_from_cross_product
+from scotty.fun_general_v4 import find_K_magnitude, dot
 from scotty.geometry_v4 import MagneticField_Cylindrical, MagneticField_Cartesian, create_magnetic_geometry
 from scotty.hamiltonian_v4 import initialise_hamiltonians, assign_hamiltonians
 from scotty.launch_v4 import find_plasma_entry_position, find_auto_delta_signs, find_plasma_entry_parameters
@@ -145,8 +146,9 @@ def beam_me_up(
         detailed_analysis_flag = detailed_analysis_flag,
 
         # Additional flags
+        benchmarking_flag = benchmarking_flag,
         ray_tracing_flag = ray_tracing_flag,
-        return_dt_field = return_dt_field,
+        # return_dt_field = return_dt_field,
 
         # Extra kwargs for parsing
         **kwargs,
@@ -363,7 +365,20 @@ def beam_me_up(
         )
 
     # TO REMOVE 14 Sep 26 -- this is for benchmarking
-    if benchmarking_flag: return params.solver_status, params.tau_output, params.q_output.T, params.K_output.T, params.Psi_3D_output_labframe
+    if benchmarking_flag:
+        # print(params.q_output.shape)
+        # print(params.K_output.shape)
+        _dH = hamiltonian.derivatives(params.q_output.T, params.K_output.T)
+        _g_magnitude = np.sqrt( _dH["dH_dKX"]**2 + _dH["dH_dKY"]**2 + _dH["dH_dKZ"]**2 )
+        _g_hat = (np.block([[_dH["dH_dKX"]], [_dH["dH_dKY"]], [_dH["dH_dKZ"]]]) / _g_magnitude).T
+        _y_hat = make_unit_vector_from_cross_product(field.unitvector(params.q_output.T[0], params.q_output.T[1], params.q_output.T[2]), _g_hat)
+        _x_hat = make_unit_vector_from_cross_product(_y_hat, _g_hat)
+
+        Psi_w = np.zeros((len(params.Psi_3D_output_labframe), 2, 2), dtype=np.complex128)
+        Psi_w[:, 0, 0] = dot(_x_hat, dot(params.Psi_3D_output_labframe, _x_hat))
+        Psi_w[:, 0, 1] = Psi_w[:, 1, 0] = dot(_x_hat, dot(params.Psi_3D_output_labframe, _y_hat))
+        Psi_w[:, 1, 1] = dot(_y_hat, dot(params.Psi_3D_output_labframe, _y_hat))
+        return params.solver_status, params.tau_output, params.q_output.T, params.K_output.T, params.Psi_3D_output_labframe, (_g_hat, _x_hat, _y_hat), Psi_w
 
     # Coordinate conversions for later
     params.coordinate_conversions()

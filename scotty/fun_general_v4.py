@@ -492,6 +492,8 @@ def poloidal_flux_along_ray_line(
         else:
             NaN_replacement_value = polflux[~np.isnan(polflux)][0]
             polflux = np.nan_to_num(polflux, nan=NaN_replacement_value)
+
+    else: raise ValueError(f"Ray line positions must have only 1 or 2 dimensions but got {positions.ndim}")
     
     return polflux # type: ignore
 
@@ -609,14 +611,69 @@ def find_inverse_2D(matrix_2D: Array) -> Array:
     # Finds the inverse of a 2x2 matrix
     matrix_2D_inverse = np.zeros([2, 2], dtype=matrix_2D.dtype)
     det = matrix_2D[0, 0] * matrix_2D[1, 1] - matrix_2D[0, 1] * matrix_2D[1, 0]
-    if np.abs(det) < 1e-5: raise ValueError(f"Matrix is close to singular")
+    if np.abs(det) < 1e-5: log.warning(f"Matrix is close to singular")
     matrix_2D_inverse[0, 0] =  matrix_2D[1, 1] / det
     matrix_2D_inverse[1, 1] =  matrix_2D[0, 0] / det
     matrix_2D_inverse[0, 1] = -matrix_2D[0, 1] / det
     matrix_2D_inverse[1, 0] = -matrix_2D[1, 0] / det
     return matrix_2D_inverse
 
-def find_K_magnitude(cartesian: bool, K0: ArrayLike, K1: ArrayLike, K2: ArrayLike, q0: ArrayLike) -> FloatArray:
+def find_g_cartesian(cartesian: bool, q0: ArrayLike, q1: ArrayLike, q2: ArrayLike, dH: dict) -> Tuple[ArrayLike, ArrayLike, ArrayLike]:
+    """
+    Find, in Cartesian coordinates:
+    (1) the group velocity vector, `g`;
+    (2) its magnitude, `|g|`; and
+    (3) its unit vector, `g_hat`.
+
+    Parameters
+    ----------
+    cartesian : bool
+        `True` for Cartesian geometry and `False` for cylindrical
+    q0 : ArrayLike
+        `q_X` for Cartesian geometry and `q_R` for cylindrical
+    q1 : ArrayLike
+        `q_Y` for Cartesian geometry and `q_zeta` for cylindrical
+    q2 : ArrayLike
+        `q_Z` for both Cartesian and cylindrical geometry
+    K0 : ArrayLike
+        `K_X` for Cartesian geometry and `K_R` for cylindrical
+    K1 : ArrayLike
+        `K_Y` for Cartesian geometry and `K_zeta` for cylindrical
+    K2 : ArrayLike
+        `K_Z` for both Cartesian and cylindrical geometry
+    dH : dict
+        Dictionary of derivatives of the Hamiltonian, i.e. `dH = hamiltonian.derivatives(...)`
+
+    Returns
+    ----------
+    g_vec : ArrayLike
+        Group velocity, in Cartesian coordinates
+    g_mag : ArrayLike
+        Magnitude of the group velocity
+    g_hat : ArrayLike
+        Unit vector of the group velocity, in Cartesian coordinates
+    """
+    if cartesian:
+        dH_dKx = dH["dH_dKx"]
+        dH_dKy = dH["dH_dKy"]
+        dH_dKz = dH["dH_dKz"]
+    else: # cylindrical
+        q_R, q_zeta, q_Z = q0, q1, q2
+        sin_zeta = np.sin(q_zeta)
+        cos_zeta = np.cos(q_zeta)
+        dH_dKR = dH["dH_dKR"]
+        dH_dKzeta = dH["dH_dKzeta"]
+        dH_dKx = cos_zeta*dH_dKR - q_R*sin_zeta*dH_dKzeta
+        dH_dKy = sin_zeta*dH_dKR + q_R*cos_zeta*dH_dKzeta
+        dH_dKz = dH["dH_dKZ"]
+    
+    g_vec_cart = np.stack((dH_dKx, dH_dKy, dH_dKz), axis=1)
+    g_magnitude = np.linalg.norm(g_vec_cart, axis=1)
+    g_hat_cart = g_vec_cart / g_magnitude[:, np.newaxis]
+
+    return g_vec_cart, g_magnitude, g_hat_cart
+
+def find_K_magnitude(cartesian: bool, K0: ArrayLike, K1: ArrayLike, K2: ArrayLike, q0: ArrayLike) -> ArrayLike:
     """
     Find the magnitude of the wavevector. If in cylindrical geometry (i.e.
     `K_lab_cyl`) then account for the fact that `K_lab_cyl[1]` is the
@@ -641,6 +698,11 @@ def find_K_magnitude(cartesian: bool, K0: ArrayLike, K1: ArrayLike, K2: ArrayLik
         Magnitude of the wavevector
     """
     return np.sqrt(K0**2 + K1**2 + K2**2) if cartesian else np.sqrt(K0**2 + (K1/q0)**2 + K2**2)
+
+def reshape_33N_to_N33(array: FloatArray):
+    """Such that shape is [points,3,3] instead of [3,3,points]"""
+    if array.ndim == 2: return array
+    return np.moveaxis(np.squeeze(array), 2, 0)
 
 ##################################################
 #
@@ -1166,22 +1228,36 @@ def find_mode_index_and_ehat(mode_flag: VALID_LAUNCH_MODE_FLAGS, H_Cardanos: Flo
     
     return np.squeeze(mode_idx), np.squeeze(H), np.squeeze(ehat)
 
-
-
-
-
-# def find_beam_widths_curvs(
-#     Psi_w, K_vec, g_hat):
+def find_beam_widths_and_curvs(Psi_w: ComplexFloatArray, K_vec: FloatArray, g_hat: FloatArray):
+    """
+    Calculate the beam widths and curvatures
     
-#     Re_Psi_w = np.real(Psi_w)
-#     Re_Psi_w_eigvals = np.linalg.eigvalsh(Re_Psi_w)
-#     K_mag = np.linalg.norm(K_vec, axis=1)
-#     K_g_mag = np.sum(K_vec * g_hat, axis=1)
-#     curvs = np.squeeze((K_g_mag**2 / K_mag**3)[:, np.newaxis] * Re_Psi_w_eigvals)
+    Parameters
+    ----------
+    Psi_w : (2,2) or (N,2,2) ComplexFloatArray
+        The beam matrix
+    K_vec : (3,) or (N,3) FloatArray
+        The wavevector
+    g_hat : (3,) or (N,3) FloatArray
+        The group velocity unit vector
 
-#     Im_Psi_w = np.imag(Psi_w)
-#     Im_Psi_w_eigvals = np.linalg.eigvalsh(Im_Psi_w)
-#     widths = np.squeeze(np.sqrt( np.full(Im_Psi_w_eigvals.shape, 2) / Im_Psi_w_eigvals ))
+    Returns
+    ----------
+    curv1 : float or (N,) FloatArray
+    curv2 : float or (N,) FloatArray
+    width1 : float or (N,) FloatArray
+    width2 : float or (N,) FloatArray
+    """
 
-#     if curvs.ndim == 1: return curvs[0], curvs[1], widths[0], widths[1]
-#     else:               return curvs[:, 0], curvs[:, 1], widths[:, 0], widths[:, 1]
+    Re_Psi_w = np.real(Psi_w)
+    Re_Psi_w_eigvals = np.linalg.eigvalsh(Re_Psi_w)
+    K_mag = np.linalg.norm(K_vec, axis=1)
+    K_g_mag = np.sum(K_vec * g_hat, axis=1)
+    curvs = np.squeeze((K_g_mag**2 / K_mag**3)[:, np.newaxis] * Re_Psi_w_eigvals)
+
+    Im_Psi_w = np.imag(Psi_w)
+    Im_Psi_w_eigvals = np.linalg.eigvalsh(Im_Psi_w)
+    widths = np.squeeze(np.sqrt( np.full(Im_Psi_w_eigvals.shape, 2) / Im_Psi_w_eigvals ))
+
+    if curvs.ndim == 1: return curvs[0], curvs[1], widths[0], widths[1]
+    else:               return curvs[:, 0], curvs[:, 1], widths[:, 0], widths[:, 1]

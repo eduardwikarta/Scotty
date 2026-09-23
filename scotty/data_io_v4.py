@@ -7,8 +7,7 @@ log = logging.getLogger(__name__)
 def inputs_to_dataset(params: Parameters, field: VALID_FIELDS) -> xr.Dataset:
 
     cart = params.cartesian_flag
-
-    inputs_ds = xr.Dataset({
+    return xr.Dataset({
         # Main parameters
         "geometry": params.geometry,
         "poloidal_launch_angle_Torbeam": params.poloidal_launch_angle_deg_Torbeam,
@@ -78,27 +77,58 @@ def inputs_to_dataset(params: Parameters, field: VALID_FIELDS) -> xr.Dataset:
         },
     )
 
-    return inputs_ds
-
-def solver_outputs_to_dataset(params: Parameters, field: VALID_FIELDS) -> xr.Dataset:
+def solver_outputs_to_dataset(params: Parameters) -> xr.Dataset:
+    # put in docstring that K_zeta is toroidal mode number not actually the true toroidal component
 
     cart = params.cartesian_flag
-    rtf = params.ray_tracing_flag
+    btf = not params.ray_tracing_flag
+    return xr.Dataset({
+        # launch stuff
+        "q_launch_cartesian":   (["row_cart"], params.q_launch_cartesian),
+        "q_launch_cylindrical": (["row_cyld"], params.q_launch_cylindrical),
+        "K_launch_cartesian":   (["row_cart"], params.K_launch_cartesian),
+        "K_launch_cylindrical": (["row_cyld"], params.K_launch_cylindrical),
+        **({"Psi_3D_launch_labframe_cartesian":   (["row_cart", "col_cart"], params.Psi_3D_launch_labframe_cartesian)}   if btf else {}),
+        **({"Psi_3D_launch_labframe_cylindrical": (["row_cyld", "col_cyld"], params.Psi_3D_launch_labframe_cylindrical)} if btf else {}),
 
-    solver_ds = xr.Dataset({
-        # General information
+        # entry stuff
+        # for q and K, entry and initial are the same
+        **({"Psi_3D_entry_labframe_cartesian":   (["row_cart", "col_cart"], params.Psi_3D_entry_labframe_cartesian)}   if btf else {}),
+        **({"Psi_3D_entry_labframe_cylindrical": (["row_cyld", "col_cyld"], params.Psi_3D_entry_labframe_cylindrical)} if btf else {}),
+
+        # initial stuff
+        "q_initial_cartesian":   (["row_cart"], params.q_initial_cartesian),
+        "q_initial_cylindrical": (["row_cyld"], params.q_launch_cylindrical),
+        "K_initial_cartesian":   (["row_cart"], params.K_initial_cartesian),
+        "K_initial_cylindrical": (["row_cyld"], params.K_initial_cylindrical),
+        **({"Psi_3D_initial_labframe_cartesian":   (["row_cart", "col_cart"], params.Psi_3D_initial_labframe_cartesian)}   if btf else {}),
+        **({"Psi_3D_initial_labframe_cylindrical": (["row_cyld", "col_cyld"], params.Psi_3D_initial_labframe_cylindrical)} if btf else {}),
+
+        # general solver stuff
         "solver_status": params.solver_status,
         "solver_nfev": params.solver_nfev,
         "solver_duration": params.solver_duration,
 
-        # Ray-tracing output
-        "q_output_cartesian": (["tau", "row"], params.q_output_cartesian),
+        # ray-tracing solver output
+        "q_X_output":    (["tau"], params.q_output_cartesian.T[0]),
+        "q_Y_output":    (["tau"], params.q_output_cartesian.T[1]),
+        "q_R_output":    (["tau"], params.q_output_cylindrical.T[0]),
+        "q_zeta_output": (["tau"], params.q_output_cylindrical.T[1]),
+        "q_Z_output":    (["tau"], params.q_output_cylindrical.T[2]),
+        "q_output_cartesian":   (["tau", "row_cart"], params.q_output_cartesian),
+        "q_output_cylindrical": (["tau", "row_cyld"], params.q_output_cylindrical),
+        "K_X_output":    (["tau"], params.K_output_cartesian.T[0]),
+        "K_Y_output":    (["tau"], params.K_output_cartesian.T[1]),
+        "K_R_output":    (["tau"], params.K_output_cylindrical.T[0]),
+        "K_zeta_output": (["tau"], params.K_output_cylindrical.T[1]),
+        "K_Z_output":    (["tau"], params.K_output_cylindrical.T[2]),
+        "K_output_cartesian":   (["tau", "row_cart"], params.K_output_cartesian),
+        "K_output_cylindrical": (["tau", "row_cyld"], params.K_output_cylindrical),
 
-
-
-        }.update({} if ray_tracing_flag else {
-        "": 1,
-        }),
+        # beam-tracing solver output
+        **({"Psi_3D_output_labframe_cartesian":   (["tau", "row_cart", "col_cart"], params.Psi_3D_output_labframe_cartesian)}   if btf else {}),
+        **({"Psi_3D_output_labframe_cylindrical": (["tau", "row_cyld", "col_cyld"], params.Psi_3D_output_labframe_cylindrical)} if btf else {}),
+        },
         coords = {
             "tau": params.tau_output,
             "row_cart": ["X","Y","Z"],

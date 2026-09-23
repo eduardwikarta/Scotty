@@ -200,7 +200,6 @@ def find_mode_index_and_ehat(mode_flag: VALID_LAUNCH_MODE_FLAGS, H_Cardanos: Flo
         mode_idx = np.argmin(np.abs(H_Cardanos))
         H = H_Cardanos[mode_idx]
         ehat = ehats[mode_idx]
-        # raise RuntimeError(f"Unable to check which mode index corresponds to O- and X-mode. Found {soln_idxs.shape} solutions (H = {H_Cardanos})! Check that `poloidal_flux_enter` is not too deep in the plasma")
     
     elif soln_idxs.shape == (1,):
         mode_idx = soln_idxs[0]
@@ -229,7 +228,7 @@ def find_mode_index_and_ehat(mode_flag: VALID_LAUNCH_MODE_FLAGS, H_Cardanos: Flo
         H = soln_H[idx]
         ehat = soln_ehats[idx]
     
-    return np.squeeze(mode_idx), np.squeeze(H), np.squeeze(ehat)
+    return cast(int, np.squeeze(mode_idx)), np.squeeze(H), np.squeeze(ehat)
 
 
 
@@ -251,7 +250,7 @@ def find_plasma_entry_parameters(
     hamiltonian_neg1: Optional[Hamiltonian] = None,
     tol_H: float = 1e-3,
     tol_O_mode_polarisation: float = 0.25
-) -> Tuple[Optional[FloatArray],
+) -> Tuple[FloatArray,
            FloatArray,
            Optional[ComplexFloatArray],
            Optional[ComplexFloatArray],

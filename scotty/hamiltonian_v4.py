@@ -1,8 +1,9 @@
 import logging
+from multiprocessing import Value
 import numpy as np
 from scotty.checks_v4 import VALID_FIELDS, VALID_LAUNCH_MODE_FLAGS
 from scotty.derivatives import derivative
-from scotty.fun_general_v4 import find_normalised_plasma_ang_freq, find_normalised_gyro_ang_freq, angular_frequency_to_wavenumber, dot, find_Booker_terms
+from scotty.fun_general_v4 import find_normalised_plasma_ang_freq, find_normalised_gyro_ang_freq, angular_frequency_to_wavenumber, dot, find_Booker_terms, reshape_33N_to_N33
 from scotty.geometry_v4 import MagneticField_Cylindrical, MagneticField_Cartesian
 from scotty.profile_fit import ProfileFitLike
 from scotty.typing import ArrayLike, FloatArray
@@ -135,7 +136,7 @@ class Hamiltonian:
         K_magnitude = np.linalg.norm(K_vec, axis=0, keepdims=True)
         K_hat = K_vec / K_magnitude
 
-        sin_theta_m = np.dot(b_hat, K_hat) if np.size(q0) == 1 else dot(b_hat.T, K_hat.T)
+        sin_theta_m = np.dot(b_hat, K_hat) if np.size(q0) == 1 else dot(b_hat, K_hat.T) # when given multiple points, b_hat.shape is (len_tau, N) while K_hat.shape (N, len_tau)
         sin_theta_m_sq = cast(ArrayLike, sin_theta_m**2)
 
         Booker_alpha, Booker_beta, Booker_gamma = find_Booker_terms(
@@ -167,7 +168,7 @@ class Hamiltonian:
             #   - pol. flux = {polflux}
             #   - n_e = {electron_density}
             #   - T_e = {temperature}
-            #   - {"[B_R, B_T, B_Z]" if isinstance(self.field, MagneticField_Cylindrical) else "[B_X, B_Y, B_Z]"} = {B_magnitude*b_hat}
+            #   - {"[B_R, B_T, B_Z]" if isinstance(self.field, MagneticField_Cylindrical) else "[B_X, B_Y, B_Z]"} = {B_magnitude*b_hat.T}
             #
             #   - sin(theta_m)^2 = {sin_theta_m_sq}
             #   - |theta_m| (in rad) = {np.arcsin(np.sqrt(sin_theta_m_sq))}
@@ -185,8 +186,25 @@ class Hamiltonian:
         return H_Booker
     
     def derivatives(self, q: FloatArray, K: FloatArray, second_order: bool = False) -> Dict[str, FloatArray]:
-        """Evaluate the first-order derivative in all directions at the given
+        """
+        Evaluate the first-order derivative in all directions at the given
         point(s), and optionally the second-order ones too
+
+        Parameters
+        ----------
+        q : (3,N) FloatArray
+            Position vector, lab frame
+        K : (3,N) FloatArray
+            Wavevector, lab frame
+        second_order : bool
+            `False` returns only first order derivatives; `True` returns
+            first and second order derivatives
+
+        Returns
+        ----------
+        dH : dict
+            Dictionary whose keys are the derivative names; e.g.
+            `dH_dX`, `dH_dKX`, etc.
         """
         
         def apply_stencil(dims: Tuple[str, ...], stencil: str): return derivative(self, dims, starts, self.spacings, stencil)
@@ -227,7 +245,7 @@ class Hamiltonian:
         
         # equivalent to elif isinstance(self.field, MagneticField_Cartesian):
         # but written as else to stop the type checker complaining
-        else: 
+        else:
             X, Y, Z = q
             K_X, K_Y, K_Z = K
             starts = {"q0": X, "q1": Y, "q2": Z, "K0": K_X, "K1": K_Y, "K2": K_Z}
@@ -356,11 +374,6 @@ def hessians(dH: dict, cartesian: bool) -> Tuple[FloatArray, FloatArray, FloatAr
             \nabla_K \nabla_K H \\
           \end{gather}
     """
-    
-    def reshape(array: FloatArray):
-        """Such that shape is [points,3,3] instead of [3,3,points]"""
-        if array.ndim == 2: return array
-        return np.moveaxis(np.squeeze(array), 2, 0)
 
     if not cartesian: # isinstance(field, MagneticField_Cylindrical):
         d2H_dR2        = dH["d2H_dR2"]
@@ -381,19 +394,19 @@ def hessians(dH: dict, cartesian: bool) -> Tuple[FloatArray, FloatArray, FloatAr
 
         zeros = np.zeros_like(d2H_dR2)
 
-        grad_grad_H = reshape(np.array([
+        grad_grad_H = reshape_33N_to_N33(np.array([
             [d2H_dR2,        zeros,          d2H_dR_dZ     ],
             [zeros,          zeros,          zeros         ],
             [d2H_dR_dZ,      zeros,          d2H_dZ2       ],
         ]))
 
-        gradK_grad_H = reshape(np.array([
+        gradK_grad_H = reshape_33N_to_N33(np.array([
             [d2H_dKR_dR,     zeros,          d2H_dKR_dZ    ],
             [d2H_dKzeta_dR,  zeros,          d2H_dKzeta_dZ ],
             [d2H_dKZ_dR,     zeros,          d2H_dKZ_dZ    ],
         ]))
 
-        gradK_gradK_H = reshape(np.array([
+        gradK_gradK_H = reshape_33N_to_N33(np.array([
             [d2H_dKR2,       d2H_dKR_dKzeta, d2H_dKR_dKZ   ],
             [d2H_dKR_dKzeta, d2H_dKzeta2,    d2H_dKzeta_dKZ],
             [d2H_dKR_dKZ,    d2H_dKzeta_dKZ, d2H_dKZ2      ],
@@ -424,22 +437,154 @@ def hessians(dH: dict, cartesian: bool) -> Tuple[FloatArray, FloatArray, FloatAr
         d2H_dZ_dKY  = dH["d2H_dZ_dKY"]
         d2H_dZ_dKZ  = dH["d2H_dZ_dKZ"]
         
-        grad_grad_H = reshape(np.array([
+        grad_grad_H = reshape_33N_to_N33(np.array([
             [d2H_dX2,       d2H_dX_dY,     d2H_dX_dZ],
             [d2H_dX_dY,     d2H_dY2,       d2H_dY_dZ],
             [d2H_dX_dZ,     d2H_dY_dZ,     d2H_dZ2  ]
         ]))
 
-        gradK_grad_H = reshape(np.array([
+        gradK_grad_H = reshape_33N_to_N33(np.array([
             [d2H_dX_dKX,    d2H_dY_dKX,    d2H_dZ_dKX],
             [d2H_dX_dKY,    d2H_dY_dKY,    d2H_dZ_dKY],
             [d2H_dX_dKZ,    d2H_dY_dKZ,    d2H_dZ_dKZ]
         ]))
 
-        gradK_gradK_H = reshape(np.array([
+        gradK_gradK_H = reshape_33N_to_N33(np.array([
             [d2H_dKX2,      d2H_dKX_dKY,   d2H_dKX_dKZ],
             [d2H_dKX_dKY,   d2H_dKY2,      d2H_dKY_dKZ],
             [d2H_dKX_dKZ,   d2H_dKY_dKZ,   d2H_dKZ2   ]
         ]))
 
     return grad_grad_H, gradK_grad_H, gradK_gradK_H
+
+
+
+def convert_hessians(
+    q_start: FloatArray,
+    dH: dict,
+    grad_grad_H_start: FloatArray,
+    gradK_grad_H_start: FloatArray,
+    gradK_gradK_H_start: FloatArray,
+    start: Literal["cartesian", "cylindrical"],
+    end: Literal["cylindrical", "cartesian"]
+) -> Tuple[FloatArray, FloatArray, FloatArray]:
+    """
+    Convert Hessians from Cartesian to cylindrical or vice versa
+
+    Parameters
+    ----------
+    q_start : (3,) or (3,N) FloatArray
+        The position of the corresponding Hessians
+    dH : dict
+        First order derivatives of the dispersion relation H, i.e. `hamiltonian.derivatives(...)`
+    grad_grad_H_start : (3,3) or (N,3,3) FloatArray
+        The spatial Hessian
+    gradK_grad_H_start : (3,3) or (N,3,3) FloatArray
+        The mixed Hessian
+    gradK_gradK_H_start : (3,3) or (N,3,3) FloatArray
+        The wavevector Hessian
+    start : Literal["cartesian", "cylindrical"]
+        The coordinate system used for the current Hessian
+    end : Literal["cylindrical", "cartesian"]
+        The coordinate system to convert the current Hessian into
+    """
+
+    if grad_grad_H_start.shape == (3,3):
+        squeeze = True
+        grad_grad_H_start = np.array([grad_grad_H_start])
+        gradK_grad_H_start = np.array([gradK_grad_H_start])
+        gradK_gradK_H_start = np.array([gradK_gradK_H_start])
+    else:
+        squeeze = False
+
+    ij = np.triu_indices(3)
+    
+    if start.lower() == "cylindrical" and end.lower() == "cartesian":
+        R, zeta, _ = q_start
+        R2 = R**2
+        sin = np.sin(zeta)
+        cos = np.cos(zeta)
+        sincos = sin*cos
+        sin2 = sin**2
+        cos2 = cos**2
+
+        dH_dR = dH["dH_dR"]
+        dH_dzeta = np.zeros_like(dH["dH_dR"])
+        dH_dKR = dH["dH_dKR"]
+        dH_dKzeta = dH["dH_dKzeta"]
+
+        d2H_dR2, d2H_dR_dzeta, d2H_dR_dZ, d2H_dzeta2, d2H_dzeta_dZ, d2H_dZ2 = grad_grad_H_start[:, ij[0], ij[1]].T
+        d2H_dR_dKR, d2H_dzeta_dKR, d2H_dZ_dKR, d2H_dR_dKzeta, d2H_dzeta_dKzeta, d2H_dZ_dKzeta, d2H_dR_dKZ, d2H_dzeta_dKZ, d2H_dZ_dKZ = gradK_grad_H_start.reshape(gradK_grad_H_start.shape[0], 9).T
+        d2H_dKR2, d2H_dKR_dKzeta, d2H_dKR_dKZ, d2H_dKzeta2, d2H_dKzeta_dKZ, d2H_dKZ2 = gradK_gradK_H_start[:, ij[0], ij[1]].T
+
+        d2H_dX2   = cos2*d2H_dR2 - 2*sincos/R*d2H_dR_dzeta + sin2/R2*d2H_dzeta2 + sin2/R*dH_dR + 2*sincos/R2*dH_dzeta
+        d2H_dX_dY = sincos*d2H_dR2 + (cos2-sin2)/R*d2H_dR_dzeta - sincos/R2*d2H_dzeta2 - sincos/R*dH_dR + (sin2-cos2)/R2*dH_dzeta
+        d2H_dX_dZ = cos*d2H_dR_dZ - sin/R*d2H_dzeta_dZ
+        d2H_dY2   = sin2*d2H_dR2 + 2*sincos/R*d2H_dR_dzeta + cos2/R2*d2H_dzeta2 + cos2/R*dH_dR - 2*sincos/R2*dH_dzeta
+        d2H_dY_dZ = sin*d2H_dR_dZ + cos/R*d2H_dzeta_dZ
+        # d2H_dZ2   = d2H_dZ2
+
+        d2H_dX_dKx = sin2/R2*d2H_dzeta2 + cos2*d2H_dR_dKR - sincos/R*d2H_dzeta_dKR - sincos*d2H_dR_dKzeta + sin2/R*dH_dKR + sincos/R2*dH_dzeta
+        d2H_dX_dKy = sincos*d2H_dR_dKR - sin2/R*d2H_dzeta_dKR + R*cos2*d2H_dR_dKzeta - sincos*d2H_dzeta_dKzeta - sincos/R*dH_dKR + dH_dzeta
+        d2H_dX_dKz = cos*d2H_dR_dKZ - sin/R*d2H_dzeta_dKZ
+        d2H_dY_dKx = sincos*d2H_dR_dKR + cos2/R*d2H_dzeta_dKR - R*sin2*d2H_dR_dKzeta - sincos*d2H_dzeta_dKzeta - sincos/R*dH_dKR - dH_dKzeta
+        d2H_dY_dKy = sin2*d2H_dR_dKR + sincos/R*d2H_dzeta_dKR + R*sincos*d2H_dR_dKzeta + cos2*d2H_dzeta_dKzeta + cos2/R*dH_dKR
+        d2H_dY_dKz = sin*d2H_dR_dKZ + cos/R*d2H_dzeta_dKZ
+        d2H_dZ_dKx = cos*d2H_dZ_dKR - R*sin*d2H_dZ_dKzeta
+        d2H_dZ_dKy = sin*d2H_dZ_dKR + R*cos*d2H_dZ_dKzeta
+        d2H_dZ_dKz = d2H_dZ_dKZ
+
+        d2H_dKx2    = cos2*d2H_dKR2 - 2*R*sincos*d2H_dKR_dKzeta + R2*sin2*d2H_dKzeta2
+        d2H_dKx_dKy = sincos*d2H_dKR2 + R*(cos2-sin2)*d2H_dKR_dKzeta - R2*sincos*d2H_dKzeta2
+        d2H_dKx_dKz = cos*d2H_dKR_dKZ - R*sin*d2H_dKzeta_dKZ
+        d2H_dKy2    = sin2*d2H_dKR2 + 2*R*sincos*d2H_dKR_dKzeta + R2*cos2*d2H_dKzeta2
+        d2H_dKy_dKz = sin*d2H_dKR_dKZ + R*cos*d2H_dKzeta_dKZ
+        d2H_dKz2    = d2H_dKZ2
+
+        new_grad_grad_H = reshape_33N_to_N33(np.array([
+            [d2H_dX2,       d2H_dX_dY,     d2H_dX_dZ],
+            [d2H_dX_dY,     d2H_dY2,       d2H_dY_dZ],
+            [d2H_dX_dZ,     d2H_dY_dZ,     d2H_dZ2  ]
+        ]))
+        new_gradK_grad_H = reshape_33N_to_N33(np.array([
+            [d2H_dX_dKx,    d2H_dY_dKx,    d2H_dZ_dKx],
+            [d2H_dX_dKy,    d2H_dY_dKy,    d2H_dZ_dKy],
+            [d2H_dX_dKz,    d2H_dY_dKz,    d2H_dZ_dKz]
+        ]))
+        new_gradK_gradK_H = reshape_33N_to_N33(np.array([
+            [d2H_dKx2,      d2H_dKx_dKy,   d2H_dKx_dKz],
+            [d2H_dKx_dKy,   d2H_dKy2,      d2H_dKy_dKz],
+            [d2H_dKx_dKz,   d2H_dKy_dKz,   d2H_dKz2   ]
+        ]))
+
+    elif start.lower() == "cartesian" and end.lower() == "cylindrical": raise RuntimeError("Hessian conversion from cart. to cyld. not implemented yet")
+    else: raise ValueError(f"Hessian conversion from {start} to {end} not supported")
+
+    if squeeze: return np.squeeze(new_grad_grad_H), np.squeeze(new_gradK_grad_H), np.squeeze(new_gradK_gradK_H)
+    else:       return new_grad_grad_H, new_gradK_grad_H, new_gradK_gradK_H
+
+        # original code, from eduard_testfile.ipynb
+
+        # scotty_2d_data["d2H_dX2"]   = _cos2*_d2H_dR2 - 2*_sincos/_R*_d2H_dR_dzeta + _sin2/_R2*_d2H_dzeta2 + _sin2/_R*_dH_dR + 2*_sincos/_R2*_dH_dzeta
+        # scotty_2d_data["d2H_dX_dY"] = _sincos*_d2H_dR2 + (_cos2-_sin2)/_R*_d2H_dR_dzeta - _sincos/_R2*_d2H_dzeta2 - _sincos/_R*_dH_dR + (_sin2-_cos2)/_R2*_dH_dzeta
+        # scotty_2d_data["d2H_dX_dZ"] = _cos*_d2H_dR_dZ - _sin/_R*_d2H_dzeta_dZ
+        # scotty_2d_data["d2H_dY2"]   = _sin2*_d2H_dR2 + 2*_sincos/_R*_d2H_dR_dzeta + _cos2/_R2*_d2H_dzeta2 + _cos2/_R*_dH_dR - 2*_sincos/_R2*_dH_dzeta
+        # scotty_2d_data["d2H_dY_dZ"] = _sin*_d2H_dR_dZ + _cos/_R*_d2H_dzeta_dZ
+        # scotty_2d_data["d2H_dZ2"]   = _d2H_dZ2
+
+        # scotty_2d_data["d2H_dX_dKx"] = _sin2/_R2*_d2H_dzeta2 + _cos2*_d2H_dKR_dR - _sincos/_R*_d2H_dKR_dzeta - _sincos*_d2H_dKzeta_dR + _sin2/_R*_dH_dKR + _sincos/_R2*_dH_dzeta
+        # scotty_2d_data["d2H_dX_dKy"] = _sincos*_d2H_dKR_dR - _sin2/_R*_d2H_dKR_dzeta + _R*_cos2*_d2H_dKzeta_dR - _sincos*_d2H_dKzeta_dzeta - _sincos/_R*_dH_dKR + _dH_dzeta
+        # scotty_2d_data["d2H_dX_dKz"] = _cos*_d2H_dKZ_dR - _sin/_R*_d2H_dKZ_dzeta
+        # scotty_2d_data["d2H_dY_dKx"] = _sincos*_d2H_dKR_dR + _cos2/_R*_d2H_dKR_dzeta - _R*_sin2*_d2H_dKzeta_dR - _sincos*_d2H_dKzeta_dzeta - _sincos/_R*_dH_dKR - _dH_dKzeta
+        # scotty_2d_data["d2H_dY_dKy"] = _sin2*_d2H_dKR_dR + _sincos/_R*_d2H_dKR_dzeta + _R*_sincos*_d2H_dKzeta_dR + _cos2*_d2H_dKzeta_dzeta + _cos2/_R*_dH_dKR
+        # scotty_2d_data["d2H_dY_dKz"] = _sin*_d2H_dKZ_dR + _cos/_R*_d2H_dKZ_dzeta
+        # scotty_2d_data["d2H_dZ_dKx"] = _cos*_d2H_dKR_dZ - _R*_sin*_d2H_dKzeta_dZ
+        # scotty_2d_data["d2H_dZ_dKy"] = _sin*_d2H_dKR_dZ + _R*_cos*_d2H_dKzeta_dZ
+        # scotty_2d_data["d2H_dZ_dKz"] = _d2H_dKZ_dZ
+
+        # scotty_2d_data["d2H_dKx2"]    = _cos2*_d2H_dKR2 - 2*_R*_sincos*_d2H_dKR_dKzeta + _R2*_sin2*_d2H_dKzeta2
+        # scotty_2d_data["d2H_dKx_dKy"] = _sincos*_d2H_dKR2 + _R*(_cos2-_sin2)*_d2H_dKR_dKzeta - _R2*_sincos*_d2H_dKzeta2
+        # scotty_2d_data["d2H_dKx_dKz"] = _cos*_d2H_dKR_dKZ - _R*_sin*_d2H_dKzeta_dKZ
+        # scotty_2d_data["d2H_dKy2"]    = _sin2*_d2H_dKR2 + 2*_R*_sincos*_d2H_dKR_dKzeta + _R2*_cos2*_d2H_dKzeta2
+        # scotty_2d_data["d2H_dKy_dKz"] = _sin*_d2H_dKR_dKZ + _R*_cos*_d2H_dKzeta_dKZ
+        # scotty_2d_data["d2H_dKz2"]    = _d2H_dKZ2

@@ -64,7 +64,7 @@ class Parameters:
     distance_from_launch_to_entry: Optional[float]
 
     # wavevectors
-    K_launch: Optional[FloatArray]
+    K_launch: FloatArray
     K_initial: FloatArray
     K_output: FloatArray
     K_output_magnitude: FloatArray
@@ -403,6 +403,11 @@ class Parameters:
 
             # beam matrices
             if self.ray_tracing_flag:
+                # otherwise the type checker complains
+                assert self.Psi_3D_launch_labframe is not None
+                assert self.Psi_3D_entry_labframe is not None
+                assert self.Psi_3D_initial_labframe is not None
+                assert self.Psi_3D_output_labframe is not None
                 self.Psi_3D_launch_labframe_cartesian = self.Psi_3D_launch_labframe # (3,3)
                 self.Psi_3D_launch_labframe_cylindrical = find_Psi_3D_labframe_cart_to_cyl(self.Psi_3D_launch_labframe_cartesian, self.K_launch_cartesian, self.q_launch_cartesian)
                 self.Psi_3D_entry_labframe_cartesian = self.Psi_3D_entry_labframe # (3,3)
@@ -431,6 +436,11 @@ class Parameters:
 
             # beam matrices
             if self.ray_tracing_flag:
+                # otherwise the type checker complains
+                assert self.Psi_3D_launch_labframe is not None
+                assert self.Psi_3D_entry_labframe is not None
+                assert self.Psi_3D_initial_labframe is not None
+                assert self.Psi_3D_output_labframe is not None
                 self.Psi_3D_launch_labframe_cylindrical = self.Psi_3D_launch_labframe # (3,3)
                 self.Psi_3D_launch_labframe_cartesian = find_Psi_3D_labframe_cyl_to_cart(self.Psi_3D_launch_labframe_cylindrical, self.K_launch_cylindrical, self.q_launch_cylindrical)
                 self.Psi_3D_entry_labframe_cylindrical = self.Psi_3D_entry_labframe # (3,3)
@@ -440,7 +450,7 @@ class Parameters:
                 self.Psi_3D_output_labframe_cylindrical = self.Psi_3D_output_labframe # (N,3,3)
                 self.Psi_3D_output_labframe_cartesian = find_Psi_3D_labframe_cyl_to_cart(self.Psi_3D_output_labframe_cylindrical, self.K_output_cylindrical.T, self.q_output_cylindrical.T)
 
-        self.K_output_magnitude = find_K_magnitude(True, *self.K_output_cartesian.T, self.q_output_cartesian.T[0]) # (N,)
+        self.K_output_magnitude = find_K_magnitude(True, *self.K_output_cartesian.T, self.q_output_cartesian.T[0]) # (N,) # type: ignore
         self.K_hat_output_cartesian = self.K_output_cartesian / self.K_output_magnitude[:, np.newaxis]
         
         if not self.ray_tracing_flag:
