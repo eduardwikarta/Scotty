@@ -1,7 +1,10 @@
 import logging
 import numpy as np
 from scotty.checks_v4 import VALID_FIELDS
-from scotty.hamiltonian_v4 import Hamiltonian, convert_hessians, hessians
+from scotty.derivatives import derivative
+from scotty.fun_general import make_unit_vector_from_cross_product, dot
+from scotty.fun_general_v4 import find_H_Cardano_eigh, find_H_Cardano_formula, find_beam_widths_and_curvs, find_g_cartesian, find_normalised_angular_freqs
+from scotty.hamiltonian_v4 import DielectricTensor, Hamiltonian, convert_hessians, hessians
 from scotty.profile_fit import ProfileFitLike
 from typing import Optional
 import xarray as xr
@@ -11,6 +14,10 @@ log = logging.getLogger(__name__)
 CYLINDRICAL_VECTOR_COMPONENTS = ["R", "zeta", "Z"]
 CARTESIAN_VECTOR_COMPONENTS = ["X", "Y", "Z"]
 
+def _temp(name, value):
+    log.info(f"{name} -- {value.shape} -- {value}")
+    return value
+
 def basic_analysis(
     inputs: xr.Dataset,
     solver_output: xr.Dataset,
@@ -19,6 +26,9 @@ def basic_analysis(
     field: VALID_FIELDS,
     density_fit: ProfileFitLike,
     temperature_fit: Optional[ProfileFitLike]):
+
+    r"""Unless stated otherwise, all calculations are done in
+    cartesian coordinates"""
 
     log.info(f"""\n
         ##################################################
@@ -30,52 +40,225 @@ def basic_analysis(
 
     log.debug(f"Performing analysis on ray-tracing results")
 
+    analysis_dict = {}
     cart = bool(inputs["geometry"] == "cartesian")
     btf = not bool(inputs["ray_tracing_flag"])
-
     tau = np.array(solver_output["tau"][()])
     len_tau = len(tau)
 
+    ##################################################
     # Position and wavevector stuff
+    ##################################################
     q_vec_cart = np.array(solver_output["q_output_cartesian"][()]).T   # (N,3) -> (3,N)
     q_vec_cyld = np.array(solver_output["q_output_cylindrical"][()]).T # (N,3) -> (3,N)
     K_vec_cart = np.array(solver_output["K_output_cartesian"][()]).T   # (N,3) -> (3,N)
     K_vec_cyld = np.array(solver_output["K_output_cylindrical"][()]).T # (N,3) -> (3,N)
+    K_mag = np.array(solver_output["K_output_magnitude"][()]) # (N,)
 
+    ##################################################
     # Booker Hamiltonian stuff
-    if cart: q_vec, K_vec = q_vec_cart, K_vec_cart
-    else:    q_vec, K_vec = q_vec_cyld, K_vec_cyld
-    H_Booker = hamiltonian(**q_vec, **K_vec) # type: ignore
-    H_Booker_other = hamiltonian_other(**q_vec, **K_vec) # type: ignore
+    ##################################################
+    if cart: q_vec, K_vec = q_vec_cart, K_vec_cart # (3,N) each
+    else:    q_vec, K_vec = q_vec_cyld, K_vec_cyld # (3,N) each
     dH = hamiltonian.derivatives(q_vec, K_vec, second_order=btf)
+    analysis_dict.update({
+        "H_Booker": (["tau"], hamiltonian(*q_vec, *K_vec)), # (N,) # type: ignore
+        "H_Booker_other": (["tau"], hamiltonian_other(*q_vec, *K_vec)), # (N,) # type: ignore
+    })
+
+    ##################################################
+    # Magnetic field and poloidal flux stuff
+    ##################################################
+    if cart:
+        # field.all?
+        B_X = _temp("B_X" , field.B_X(*q_vec)) # (N,)
+        B_Y = _temp("B_Y" , field.B_Y(*q_vec)) # (N,)
+        B_Z = _temp("B_Z" , field.B_Z(*q_vec)) # (N,)
+        B_mag = _temp("B_mag" , field.magnitude(*q_vec)) # (N,)
+        b_hat_cart = _temp("b_hat" , field.unitvector(*q_vec)) # (N,3)
+        dbhat_dX = _temp("dbhat_dX" , derivative(field.unitvector_cartesian, dims="X", args={"X": q_vec[0], "Y": q_vec[1], "Z": q_vec[2]}, spacings=hamiltonian.delta_X)) # (N,3)
+        dbhat_dY = _temp("dbhat_dY" , derivative(field.unitvector_cartesian, dims="Y", args={"X": q_vec[0], "Y": q_vec[1], "Z": q_vec[2]}, spacings=hamiltonian.delta_Y)) # (N,3)
+        dbhat_dZ = _temp("dbhat_dZ" , derivative(field.unitvector_cartesian, dims="Z", args={"X": q_vec[0], "Y": q_vec[1], "Z": q_vec[2]}, spacings=hamiltonian.delta_Z)) # (N,3)
+        grad_bhat_cart = _temp("grad_bhat" , np.stack((dbhat_dX, dbhat_dY, dbhat_dZ), axis=1)) # (N,3,3)
+
+        polflux = _temp("polflux" , field.polflux(*q_vec)) # (N,)
+        dp_dX = _temp("dp_dX" , field.d_polflux_dX(*q_vec, hamiltonian.delta_X)) # (N,)
+        dp_dY = _temp("dp_dY" , field.d_polflux_dY(*q_vec, hamiltonian.delta_Y)) # (N,)
+        dp_dZ = _temp("dp_dZ" , field.d_polflux_dZ(*q_vec, hamiltonian.delta_Z)) # (N,)
+    else:
+        # B_R = field.B_R(*q_vec)
+        # B_T = field.B_T(*q_vec)
+        # B_Z = field.B_Z(*q_vec)
+        # B_mag = field.magnitude(*q_vec)
+        # b_hat = field.unitvector(*q_vec)
+        # dbhat_dR = derivative(field.unitvector, dims="R", args={"R": q_vec[0], "_": q_vec[1], "Z": q_vec[2]}, spacings=hamiltonian.delta_R)
+        # dbhat_dZ = derivative(field.unitvector, dims="Z", args={"R": q_vec[0], "_": q_vec[1], "Z": q_vec[2]}, spacings=hamiltonian.delta_Z)
+        # grad_bhat = np.zeros([len_tau, 3, 3])
+        # grad_bhat[:,0,:] = dbhat_dR
+        # grad_bhat[:,2,:] = dbhat_dZ
+        # grad_bhat[:,1,0] = -B_T / (B_mag * q_vec[0])
+        # grad_bhat[:,1,1] = B_R / (B_mag * q_vec[0])
+        B_X = field.B_X(*q_vec)
+        B_Y = field.B_Y(*q_vec)
+        B_Z = field.B_Z(*q_vec)
+        B_mag = field.magnitude(*q_vec)
+        b_hat_cart = field.unitvector_cartesian(*q_vec)
+        dbhat_dX = derivative(field.unitvector_cartesian, dims="X", args={"X": q_vec_cart[0], "Y": q_vec_cart[1], "Z": q_vec_cart[2]}, spacings=hamiltonian.delta_R)
+        dbhat_dY = derivative(field.unitvector_cartesian, dims="Y", args={"X": q_vec_cart[0], "Y": q_vec_cart[1], "Z": q_vec_cart[2]}, spacings=hamiltonian.delta_R)
+        dbhat_dZ = derivative(field.unitvector_cartesian, dims="Z", args={"X": q_vec_cart[0], "Y": q_vec_cart[1], "Z": q_vec_cart[2]}, spacings=hamiltonian.delta_Z)
+        grad_bhat_cart = np.stack((dbhat_dX, dbhat_dY, dbhat_dZ), axis=1)
+        
+        polflux = field.polflux(*q_vec)
+        dp_dX = field.d_polflux_dX(*q_vec, hamiltonian.delta_R)
+        dp_dY = field.d_polflux_dY(*q_vec, hamiltonian.delta_R)
+        dp_dZ = field.d_polflux_dZ(*q_vec, hamiltonian.delta_Z)
+
+    analysis_dict.update({
+        "B_X": (["tau"], B_X),
+        "B_Y": (["tau"], B_Y),
+        "B_Z": (["tau"], B_Z),
+        "B_magnitude": (["tau"], B_mag),
+        "b_hat": (["tau", "row_cart"], b_hat_cart),
+        "dbhat_dX": (["tau", "row_cart"], dbhat_dX),
+        "dbhat_dY": (["tau", "row_cart"], dbhat_dY),
+        "dbhat_dZ": (["tau", "row_cart"], dbhat_dZ),
+        "grad_bhat": (["tau", "row_cart", "col_cart"], grad_bhat_cart),
+
+        "polflux": (["tau"], polflux),
+        "dp_dX": (["tau"], dp_dX),
+        "dp_dY": (["tau"], dp_dY),
+        "dp_dZ": (["tau"], dp_dZ),
+    })
+     
+    ##################################################
+    # Plasma properties along path
+    ##################################################
+    n_e = _temp("n_e", density_fit(polflux)) # (N,)
+    T_e = _temp("T_e", temperature_fit(polflux)) if temperature_fit else None
+    omega_launch = float(inputs["launch_angular_frequency"][()])
+    epsilon = DielectricTensor(
+        launch_angular_freq = omega_launch,
+        B_magnitude = B_mag,
+        electron_density = n_e,
+        temperature = T_e)
+    
+    (   norm_omega_pe,
+        norm_omega_ce,
+        norm_omega_LH,
+        norm_omega_RH,
+        norm_omega_UH,
+    ) = find_normalised_angular_freqs(
+        launch_angular_freq = omega_launch,
+        B_total = B_mag,
+        electron_density = n_e,
+        temperature = T_e)
+
+    analysis_dict.update({
+        "electron_density": (["tau"], n_e),
+        "electron_temperature": (["tau"], T_e),
+        "e_bb": (["tau"], epsilon.e_bb),
+        "e_11": (["tau"], epsilon.e_11),
+        "e_12": (["tau"], epsilon.e_12),
+        "normalised_omega_pe": (["tau"], norm_omega_pe),
+        "normalised_omega_ce": (["tau"], norm_omega_ce),
+        "normalised_omega_LH": (["tau"], norm_omega_LH),
+        "normalised_omega_RH": (["tau"], norm_omega_RH),
+        "normalised_omega_UH": (["tau"], norm_omega_UH),
+    })
+
+    ##################################################
+    # Ray properties along path
+    ##################################################
+    sin_theta_m = np.sum(b_hat_cart.T * K_vec_cart, axis=1)
+    theta_m = np.sign(sin_theta_m) * np.arcsin(np.abs(sin_theta_m))
+
+    if cart:
+        # use find_g_cartesian?
+        g_vec_cart, g_mag, g_hat_cart = find_g_cartesian(cart, *q_vec, dH) # type: ignore
+    else:
+        # g_vec = np.stack((dH["dH_dKR"], dH["dH_dKzeta"] * q_vec_cyld[0], dH["dH_dKZ"]), axis=1)
+        # g_mag = np.linalg.norm(g_vec, axis=1)
+        # g_hat = g_vec / g_mag[:, np.newaxis]
+        g_vec_cart, g_mag, g_hat_cart = find_g_cartesian(cart, *q_vec, dH) # type: ignore
+    
+    y_hat_cart = make_unit_vector_from_cross_product(b_hat_cart, g_hat_cart)
+    x_hat_cart = make_unit_vector_from_cross_product(y_hat_cart, g_hat_cart)
+
+    ##################################################
+    # Dispersion relation and polarisation vector
+    ##################################################
+    H_Cardano_1, H_Cardano_2, H_Cardano_3 = find_H_Cardano_formula(
+        launch_angular_freq = omega_launch,
+        K_magnitude = K_mag,
+        epsilon_para = epsilon.e_bb,
+        epsilon_perp = epsilon.e_11,
+        epsilon_g = epsilon.e_12,
+        theta_m = theta_m,
+    )
+
+    H_eigvals, e_eigvecs = find_H_Cardano_eigh(
+        launch_angular_freq = omega_launch,
+        K_magnitude = K_mag,
+        epsilon_para = epsilon.e_bb,
+        epsilon_perp = epsilon.e_11,
+        epsilon_g = epsilon.e_12,
+        theta_m = theta_m,
+    )
+    H_eigval1 = H_eigvals[:,0]
+    H_eigval2 = H_eigvals[:,1]
+    H_eigval3 = H_eigvals[:,2]
+    e_eigvec1 = e_eigvecs[:,:,0]
+    e_eigvec2 = e_eigvecs[:,:,1]
+    e_eigvec3 = e_eigvecs[:,:,2]
+
+    log.debug(f"Performing analysis on beam-tracing results")
     if btf:
-        _temp = hessians(dH, cartesian=cart)
-        if cart: grad_grad_H_cart, gradK_grad_H_cart, gradK_gradK_H_cart = _temp
+        ##################################################
+        # Hessians and second derivatives
+        ##################################################
+        if cart:
+            grad_grad_H_cart, gradK_grad_H_cart, gradK_gradK_H_cart = hessians(dH, cartesian=cart)
+            grad_grad_H_cyld, gradK_grad_H_cyld, gradK_gradK_H_cyld = None, None, None
         else:
-            grad_grad_H_cyld, gradK_grad_H_cyld, gradK_gradK_H_cyld = _temp
-            grad_grad_H_cart, gradK_grad_H_cart, gradK_gradK_H_cart = convert_hessians(
-                q_start = q_vec_cyld,
-                dH = dH,
-                grad_grad_H_start = grad_grad_H_cyld,
-                gradK_grad_H_start = gradK_grad_H_cyld,
-                gradK_gradK_H_start = gradK_gradK_H_cyld,
-                start = "cylindrical",
-                end = "cartesian",
-            )
+            grad_grad_H_cyld, gradK_grad_H_cyld, gradK_gradK_H_cyld = hessians(dH, cartesian=cart)
+            grad_grad_H_cart, gradK_grad_H_cart, gradK_gradK_H_cart = None, None, None # convert_hessians(
+            #     q_start = q_vec_cyld,
+            #     dH = dH,
+            #     grad_grad_H_start = grad_grad_H_cyld,
+            #     gradK_grad_H_start = gradK_grad_H_cyld,
+            #     gradK_gradK_H_start = gradK_gradK_H_cyld,
+            #     start = "cylindrical",
+            #     end = "cartesian",
+            # )
+        
+        ##################################################
+        # Beam matrix (Psi_w) components in the {y, g, x} basis
+        ##################################################
+        Psi_3D_output_labframe_cartesian = np.array(solver_output["Psi_3D_output_labframe_cartesian"][()])
+        Psi_xx_output_beamframe_cartesian = dot(x_hat_cart, dot(Psi_3D_output_labframe_cartesian, x_hat_cart))
+        Psi_xy_output_beamframe_cartesian = dot(x_hat_cart, dot(Psi_3D_output_labframe_cartesian, y_hat_cart))
+        Psi_xg_output_beamframe_cartesian = dot(x_hat_cart, dot(Psi_3D_output_labframe_cartesian, g_hat_cart))
+        Psi_yy_output_beamframe_cartesian = dot(y_hat_cart, dot(Psi_3D_output_labframe_cartesian, y_hat_cart))
+        Psi_yg_output_beamframe_cartesian = dot(y_hat_cart, dot(Psi_3D_output_labframe_cartesian, g_hat_cart))
+        Psi_gg_output_beamframe_cartesian = dot(g_hat_cart, dot(Psi_3D_output_labframe_cartesian, g_hat_cart))
 
-    # Finite difference spacings
-    # delta
+        Psi_w_output_beamframe_cartesian = np.zeros((len_tau, 2, 2), dtype=np.complex128)
+        Psi_w_output_beamframe_cartesian[:, 0, 0] = Psi_xx_output_beamframe_cartesian
+        Psi_w_output_beamframe_cartesian[:, 0, 1] = Psi_w_output_beamframe_cartesian[:, 1, 0] = Psi_xy_output_beamframe_cartesian
+        Psi_w_output_beamframe_cartesian[:, 1, 1] = Psi_yy_output_beamframe_cartesian
+        curv1, curv2, width1, width2 = find_beam_widths_and_curvs(Psi_w_output_beamframe_cartesian, K_vec_cart.T, g_vec_cart.T)
 
 
 
-    # find_g_cartesian
 
 
 
 
 
-    #
-    polflux = field.polflux_in_cartesian(**q_vec_cart) # type: ignore
+    
+
+
+
 
 
 

@@ -40,9 +40,9 @@ def check_vector_pointing_into_plasma(q: FloatArray, vector: FloatArray, field: 
     q_XYZ_minus = q_XYZ - 0.01*unitv_XYZ
     q_XYZ_plus  = q_XYZ + 0.01*unitv_XYZ
 
-    polflux_at_q_minus = field.polflux_in_cartesian(*q_XYZ_minus)
-    polflux_at_q =       field.polflux_in_cartesian(*q_XYZ)
-    polflux_at_q_plus =  field.polflux_in_cartesian(*q_XYZ_plus)
+    polflux_at_q_minus = field.polflux_cartesian(*q_XYZ_minus)
+    polflux_at_q =       field.polflux_cartesian(*q_XYZ)
+    polflux_at_q_plus =  field.polflux_cartesian(*q_XYZ_plus)
 
     if polflux_at_q_minus < polflux_at_q < polflux_at_q_plus: raise ValueError(f"K_plasma is pointing out of the plasma!")
     elif polflux_at_q_plus < polflux_at_q < polflux_at_q_minus: pass
@@ -434,7 +434,6 @@ def find_Psi_3D_plasma(
         # cylindrical Scotty. However, these differences, in
         # essence, disappear when one applies row operations
         # (like partial Gaussian elimination)
-        dp_dY = 0
         interface_matrix = np.array([
             [dp_dY**2, -2*dp_dX*dp_dY,  0,                       dp_dX**2,  0,                       0                 ],
             [dp_dZ**2,  0,             -2*dp_dX*dp_dZ,           0,         0,                       dp_dX**2          ],
@@ -478,9 +477,11 @@ def find_Psi_3D_plasma(
         delta_K = K_vacuum - K_plasma
         if boundary_flag == "continuous": eta_XY = eta_XZ = eta_XYZ = 0
         else: # boundary_flag == "discontinuous"
-            eta_XY  = -0.5 * dp_dZ * (d2p_dX2*dp_dY**2 - 2*d2p_dXdY*dp_dX*dp_dY + d2p_dY2*dp_dX**2) / (dp_dX**2 + dp_dY**2)
-            eta_XZ  = -0.5 * dp_dZ * (d2p_dX2*dp_dZ**2 - 2*d2p_dXdZ*dp_dX*dp_dZ + d2p_dZ2*dp_dX**2) / (dp_dX**2 + dp_dZ**2)
-            eta_XYZ = -0.5 * dp_dZ * ((d2p_dX2 + 2*d2p_dXdY + d2p_dY2)*dp_dZ**2 + d2p_dZ2*(dp_dX + dp_dY)**2 - 2*(d2p_dXdZ + d2p_dYdZ)*dp_dZ*(dp_dX + dp_dY)) / ( dp_dX**2 + dp_dY**2 + dp_dZ**2 )
+            eta_XY  = -0.5 * (d2p_dX2*dp_dY**2 + 2*d2p_dXdY*dp_dX*dp_dY + d2p_dY2*dp_dX**2) / (dp_dX**2 + dp_dY**2)
+            eta_XZ  = -0.5 * (d2p_dX2*dp_dZ**2 + 2*d2p_dXdZ*dp_dX*dp_dZ + d2p_dZ2*dp_dX**2) / (dp_dX**2 + dp_dZ**2)
+            eta_XYZ = -0.5 * (d2p_dX2*dp_dZ**2 + d2p_dY2*dp_dZ**2 + d2p_dZ2*(dp_dX + dp_dY)**2 + 2*d2p_dXdY*dp_dZ**2 + 2*d2p_dXdZ*dp_dZ*(dp_dX + dp_dY) + 2*d2p_dYdZ*dp_dZ*(dp_dX + dp_dY)) / ( dp_dX**2 + dp_dY**2 + dp_dZ**2 )
+            # seems like this (below) has some issues; reverting back to the one in BC_3D.py (above)
+            # ((d2p_dX2 + 2*d2p_dXdY + d2p_dY2)*dp_dZ**2 + d2p_dZ2*(dp_dX + dp_dY)**2 - 2*(d2p_dXdZ + d2p_dYdZ)*dp_dZ*(dp_dX + dp_dY)) / ( dp_dX**2 + dp_dY**2 + dp_dZ**2 )
 
             log.debug(f"""
         #
@@ -490,18 +491,13 @@ def find_Psi_3D_plasma(
         #""")
         
         Psi_v_vector = np.array([Psi_XX_v, Psi_XY_v, Psi_XZ_v, Psi_YY_v, Psi_YZ_v, Psi_ZZ_v], dtype=complex)
-        # RHS_vector = np.array([
-        #     np.dot(Psi_v_vector, np.array([dp_dY**2, -2*dp_dX*dp_dY, 0, dp_dX**2, 0, 0])) + 2*eta_XY*np.dot(delta_K, np.array([dp_dX, dp_dY, 0])),
-        #     np.dot(Psi_v_vector, np.array([dp_dZ**2, 0, -2*dp_dX*dp_dZ, 0, 0, dp_dX**2])) + 2*eta_XZ*np.dot(delta_K, np.array([dp_dX, 0, dp_dZ])),
-        #     np.dot(Psi_v_vector, np.array([dp_dZ**2, 2*dp_dZ**2, -2*dp_dZ*(dp_dX + dp_dY), dp_dZ**2, -2*dp_dZ*(dp_dX + dp_dY), (dp_dX + dp_dY)**2])) - 2*eta_XYZ*np.dot(delta_K, np.array([dp_dX, dp_dY, dp_dZ])),
-        #     -dH_dX,
-        #     -dH_dY,
-        #     -dH_dZ,
-        # ], dtype=complex)
         RHS_vector = np.array([
             np.dot(Psi_v_vector, interface_matrix[0]) + 2*eta_XY *np.dot(delta_K, np.array([dp_dX, dp_dY, 0])),
             np.dot(Psi_v_vector, interface_matrix[1]) + 2*eta_XZ *np.dot(delta_K, np.array([dp_dX, 0, dp_dZ])),
-            np.dot(Psi_v_vector, interface_matrix[2]) - 2*eta_XYZ*np.dot(delta_K, np.array([dp_dX, dp_dY, dp_dZ])),
+            np.dot(Psi_v_vector, interface_matrix[2]) + 2*eta_XYZ*np.dot(delta_K, np.array([dp_dX, dp_dY, dp_dZ])),
+            # (Psi_XX_v * dp_dY**2) + (Psi_YY_v * dp_dX**2) - (2 * Psi_XY_v * dp_dX * dp_dY) + 2*(delta_K[0])*dp_dX*eta_XY + 2*(delta_K[1])*dp_dY*eta_XY,
+            # (Psi_XX_v * dp_dZ**2) + (Psi_ZZ_v * dp_dX**2) - (2 * Psi_XZ_v * dp_dX * dp_dZ) + 2*(delta_K[0])*dp_dX*eta_XZ + 2*(delta_K[2])*dp_dZ*eta_XZ,
+            # Psi_XX_v*dp_dZ**2 + Psi_YY_v*dp_dZ**2 + Psi_ZZ_v*(dp_dX + dp_dY)**2 + 2*Psi_XY_v*dp_dZ**2 - 2*Psi_XZ_v*dp_dZ*(dp_dX + dp_dY) - 2*Psi_YZ_v*dp_dZ*(dp_dX + dp_dY) + 2*(delta_K[0])*dp_dX*eta_XYZ + 2*(delta_K[1])*dp_dY*eta_XYZ + 2*(delta_K[2])*dp_dZ*eta_XYZ,
             -dH_dX,
             -dH_dY,
             -dH_dZ,
@@ -604,6 +600,9 @@ Psi_3D_plasma_labframe_cylindrical
 {Psi_3D_plasma_labframe_cylindrical[0]}
 {Psi_3D_plasma_labframe_cylindrical[1]}
 {Psi_3D_plasma_labframe_cylindrical[2]}
+
+RHS_vector[2]
+{np.dot(Psi_v_vector, interface_matrix[2]) + 2*eta_XYZ*np.dot(delta_K, np.array([dp_dX, dp_dY, dp_dZ]))}
 
 
 """)

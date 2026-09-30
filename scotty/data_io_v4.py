@@ -13,8 +13,8 @@ def inputs_to_dataset(params: Parameters, field: VALID_FIELDS) -> xr.Dataset:
         "poloidal_launch_angle_Torbeam": params.poloidal_launch_angle_deg_Torbeam,
         "toroidal_launch_angle_Torbeam": params.toroidal_launch_angle_deg_Torbeam,
         "launch_freq_GHz": params.launch_frequency_GHz,
-        # "launch_angular_frequency": params.launch_angular_frequency,
-        # "launch_wavenumber": params.launch_wavenumber,
+        "launch_angular_frequency": params.launch_angular_frequency,
+        "launch_wavenumber": params.launch_wavenumber,
         "launch_beam_width": params.launch_beam_width,
         "launch_beam_curvature": params.launch_beam_curvature,
         "launch_position": params.q_launch,
@@ -77,7 +77,7 @@ def inputs_to_dataset(params: Parameters, field: VALID_FIELDS) -> xr.Dataset:
         },
     )
 
-def solver_outputs_to_dataset(params: Parameters) -> xr.Dataset:
+def solver_output_to_dataset(params: Parameters) -> xr.Dataset:
     # put in docstring that K_zeta is toroidal mode number not actually the true toroidal component
 
     cart = params.cartesian_flag
@@ -103,6 +103,10 @@ def solver_outputs_to_dataset(params: Parameters) -> xr.Dataset:
         "K_initial_cylindrical": (["row_cyld"], params.K_initial_cylindrical),
         **({"Psi_3D_initial_labframe_cartesian":   (["row_cart", "col_cart"], params.Psi_3D_initial_labframe_cartesian)}   if btf else {}),
         **({"Psi_3D_initial_labframe_cylindrical": (["row_cyld", "col_cyld"], params.Psi_3D_initial_labframe_cylindrical)} if btf else {}),
+        "e_hat_initial": (["row_cart"], params.e_hat_initial),
+        "mode_flag_initial": params.mode_flag_initial,
+        "mode_index": params.mode_index,
+        "distance_from_launch_to_entry": params.distance_from_launch_to_entry,
 
         # general solver stuff
         "solver_status": params.solver_status,
@@ -124,6 +128,7 @@ def solver_outputs_to_dataset(params: Parameters) -> xr.Dataset:
         "K_Z_output":    (["tau"], params.K_output_cylindrical.T[2]),
         "K_output_cartesian":   (["tau", "row_cart"], params.K_output_cartesian),
         "K_output_cylindrical": (["tau", "row_cyld"], params.K_output_cylindrical),
+        "K_output_magnitude": (["tau"], params.K_output_magnitude),
 
         # beam-tracing solver output
         **({"Psi_3D_output_labframe_cartesian":   (["tau", "row_cart", "col_cart"], params.Psi_3D_output_labframe_cartesian)}   if btf else {}),

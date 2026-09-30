@@ -183,7 +183,7 @@ def immediate_analysis(
             "K_R": K_R,
             "K_Z": K_Z,
             "K_zeta_initial": K_zeta_initial,
-            "Psi_3D_lab_launch": (["row", "col"], Psi_3D_lab_launch),
+            # "Psi_3D_lab_launch": (["row", "col"], Psi_3D_lab_launch),
             "Psi_3D": solver_output.Psi_3D,
             "b_hat": (["tau", "col"], b_hat),
             "dH_dKR": (["tau"], dH_dKR),
@@ -485,11 +485,37 @@ def further_analysis(
     ) ** 2 / g_magnitude_Cardano**2
 
     # Spectrum piece of localisation as a function of distance along ray
-    spectrum_power_law_coefficient = 13 / 3  # Turbulence cascade
     wavenumber_K0 = angular_frequency_to_wavenumber(
         inputs.launch_angular_frequency.data
     )
-    loc_s = (k_perp_1_bs / (-2 * wavenumber_K0)) ** (-spectrum_power_law_coefficient)
+    # spectrum_power_law_coefficient = 13 / 3  # Turbulence cascade
+    # spectrum_power_law_coefficient_at_cutoff = spectrum_power_law_coefficient # TO REMOVE
+    # loc_s = (k_perp_1_bs / (-2 * wavenumber_K0)) ** (-spectrum_power_law_coefficient)
+    # for Happel 2017
+    k_perp_break = 900
+    spectrum_power_law_coefficient_1 = -3.6
+    spectrum_power_law_coefficient_2 = -6.3
+
+    # print("k_perp_1_bs", k_perp_1_bs)
+    C = (k_perp_break / (2*wavenumber_K0))**(spectrum_power_law_coefficient_1 - spectrum_power_law_coefficient_2)
+
+    loc_s = np.where(
+        np.abs(k_perp_1_bs) < k_perp_break,
+        1 * np.abs(k_perp_1_bs / (-2 * wavenumber_K0)) ** spectrum_power_law_coefficient_1,
+        C * np.abs(k_perp_1_bs / (-2 * wavenumber_K0)) ** spectrum_power_law_coefficient_2,
+    )
+
+    C_b = (k_perp_break / (2*wavenumber_K0))**(spectrum_power_law_coefficient_1 - spectrum_power_law_coefficient_2)
+    loc_s_binormal = np.where(
+        np.abs(k_perp_1_bs_binormal) < k_perp_break,
+        1   * np.abs(k_perp_1_bs_binormal / (-2 * wavenumber_K0)) ** spectrum_power_law_coefficient_1,
+        C_b * np.abs(k_perp_1_bs_binormal / (-2 * wavenumber_K0)) ** spectrum_power_law_coefficient_2,
+    )
+
+    if np.abs(k_perp_1_bs[cutoff_index]) < k_perp_break:
+        spectrum_power_law_coefficient_at_cutoff = spectrum_power_law_coefficient_1
+    else:
+        spectrum_power_law_coefficient_at_cutoff = spectrum_power_law_coefficient_2
 
     # Beam piece of localisation as a function of distance along ray
     # Determinant of the imaginary part of Psi_w
@@ -634,6 +660,26 @@ def further_analysis(
         "loc_b_r_s": loc_b_r_s,
         "loc_b_r": loc_b_r,
         "beam_cartesian": (["tau", "col_cart"], np.vstack([q_X, q_Y, df.q_Z.data]).T),
+
+        # Additional, but good to add next time
+        "e_eigvec0": (["tau", "col"], e_eigvecs[:,:,0]),
+        "e_eigvec1": (["tau", "col"], e_eigvecs[:,:,1]),
+        "e_eigvec2": (["tau", "col"], e_eigvecs[:,:,2]),
+        "mode_index": mode_index,
+        "beam_waist_y": beam_waist_y,
+        "spectrum_power_law_coefficient_at_cutoff": spectrum_power_law_coefficient_at_cutoff,
+        "int_loc_p_dl": np.trapz(loc_p, distance_along_line),
+        "int_loc_r_dl": np.trapz(loc_r, distance_along_line),
+        "int_loc_b_dl": np.trapz(loc_b, distance_along_line),
+        "int_loc_m_dl": np.trapz(loc_m, distance_along_line),
+        "int_loc_s_dl": np.trapz(loc_s, distance_along_line),
+        "int_loc_prbms_dl": (int_loc_prbms_dl := np.trapz(loc_p*loc_r*loc_b*loc_m*loc_s, distance_along_line)),
+        # "p_r": 1/(beam_waist_y*inputs.launch_angular_frequency**2) * int_loc_prbms_dl,
+
+        "loc_s_binormal": loc_s_binormal, # TO REMOVE
+        "int_loc_s_binormal_dl": np.trapz(loc_s_binormal, distance_along_line),
+        "int_loc_prbms_binormal_dl": (int_loc_prbms_dl := np.trapz(loc_p*loc_r*loc_b*loc_m*loc_s_binormal, distance_along_line)),
+        # "p_r_locsbinormal": 1/(beam_waist_y*inputs.launch_angular_frequency**2) * int_loc_prbms_dl,
     }
 
     RZ_point_spacing = np.sqrt((np.diff(df.q_Z)) ** 2 + (np.diff(df.q_R)) ** 2)

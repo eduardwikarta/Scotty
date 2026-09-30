@@ -95,11 +95,22 @@ class Hamiltonian:
         if isinstance(field, MagneticField_Cylindrical):
             delta_R, delta_Z, delta_K_R, delta_K_zeta, delta_K_Z = deltas
             self.spacings = {"q0": delta_R, "q1": delta_R, "q2": delta_Z, "K0": delta_K_R, "K1": delta_K_zeta, "K2": delta_K_Z}
+            self.delta_R = delta_R
+            self.delta_Z = delta_Z
+            self.delta_K_R = delta_K_R
+            self.delta_K_zeta = delta_K_zeta
+            self.delta_K_Z = delta_K_Z
             def _K_vec(K_R: ArrayLike, K_zeta: ArrayLike, K_Z: ArrayLike, q_R: ArrayLike) -> ArrayLike: return np.array([K_R, K_zeta/q_R, K_Z]) # type: ignore
 
         elif isinstance(field, MagneticField_Cartesian):
             delta_X, delta_Y, delta_Z, delta_K_X, delta_K_Y, delta_K_Z = deltas
             self.spacings = {"q0": delta_X, "q1": delta_Y, "q2": delta_Z, "K0": delta_K_X, "K1": delta_K_Y, "K2": delta_K_Z}
+            self.delta_X = delta_X
+            self.delta_Y = delta_Y
+            self.delta_Z = delta_Z
+            self.delta_K_X = delta_K_X
+            self.delta_K_Y = delta_K_Y
+            self.delta_K_Z = delta_K_Z
             def _K_vec(K_X: ArrayLike, K_Y: ArrayLike, K_Z: ArrayLike, q_R: ArrayLike) -> ArrayLike: return np.array([K_X, K_Y, K_Z]) # type: ignore
         
         self._K_vec = _K_vec

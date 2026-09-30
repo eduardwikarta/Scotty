@@ -287,6 +287,7 @@ def handle_no_resonance(
     K_zeta: float,
     solver_arguments,
     event_leave_plasma: Callable,
+    quick_run: bool,
 ) -> FloatArray:
     """Add an additional tau point at the cut-off (minimum K) if the
     beam does NOT reach a resonance
@@ -345,7 +346,12 @@ def handle_no_resonance(
     )
     index_cutoff_fine = np.argmin(K_magnitude_ray_fine)
     tau_cutoff_fine = float(solver_ray_output_fine.t[index_cutoff_fine])
-    return np.sort(np.append(tau_points, tau_cutoff_fine))
+
+    if quick_run: return (
+        np.array([solver_ray_output_fine.y[0, index_cutoff_fine], solver_ray_output_fine.y[1, index_cutoff_fine]]),
+        np.array([solver_ray_output_fine.y[2, index_cutoff_fine], K_zeta, solver_ray_output_fine.y[3, index_cutoff_fine]]),
+    ) # type: ignore # TO REMOVE
+    else: return np.sort(np.append(tau_points, tau_cutoff_fine))
 
 
 @dataclass
@@ -568,10 +574,10 @@ def propagate_ray(
         tau_events, ray_parameters_2D_events["leave_LCFS"]
     )
 
-    if quick_run:
-        return quick_K_cutoff(
-            ray_parameters_2D_events["reach_K_min"], K_zeta_initial, field
-        )
+    # if quick_run: TO REMOVE
+    #     return quick_K_cutoff(
+    #         ray_parameters_2D_events["reach_K_min"], K_zeta_initial, field
+    #     )
 
     # The beam solver outputs data at these values of tau
     # Don't include `tau_leave` itself so that last point is inside
@@ -590,6 +596,8 @@ def propagate_ray(
             K_zeta_initial,
             solver_arguments,
             solver_ray_events["leave_plasma"],
+            quick_run,
         )
 
-    return tau_leave, tau_points
+    if quick_run: return tau_points # type: ignore # this is actually q_co, K_co, but lazy to rename # TO REMOVE
+    else: return tau_leave, tau_points

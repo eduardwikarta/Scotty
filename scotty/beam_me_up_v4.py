@@ -2,8 +2,10 @@
 import logging
 import numpy as np
 import pathlib
+from scotty.analysis_v4 import basic_analysis
 from scotty.beam_solver_v4 import beam_tracing
 from scotty.checks_v4 import VALID_GEOMETRIES, VALID_LAUNCH_FLAGS, VALID_LAUNCH_MODE_FLAGS, VALID_BOUNDARY_FLAGS, Parameters, check_input_before_ray_tracing
+from scotty.data_io_v4 import inputs_to_dataset, solver_output_to_dataset
 from scotty.fun_general import make_unit_vector_from_cross_product
 from scotty.fun_general_v4 import find_K_magnitude, dot
 from scotty.geometry_v4 import MagneticField_Cylindrical, MagneticField_Cartesian, create_magnetic_geometry
@@ -364,6 +366,25 @@ def beam_me_up(
             atol = params.atol,
         )
 
+    # Coordinate conversions for later
+    params.coordinate_conversions()
+
+    # Once the ray/beam-tracing is complete, save the data in params
+    # as xarray datasets
+    inputs_ds = inputs_to_dataset(params, field)
+    solver_output_ds = solver_output_to_dataset(params)
+    basic_analysis(
+        inputs = inputs_ds,
+        solver_output = solver_output_ds,
+        hamiltonian = hamiltonian,
+        hamiltonian_other = hamiltonian_other,
+        field = field,
+        density_fit = density_fit,
+        temperature_fit = temperature_fit,
+    )
+
+
+
     # TO REMOVE 14 Sep 26 -- this is for benchmarking
     if benchmarking_flag:
         # print(params.q_output.shape)
@@ -379,12 +400,6 @@ def beam_me_up(
         Psi_w[:, 0, 1] = Psi_w[:, 1, 0] = dot(_x_hat, dot(params.Psi_3D_output_labframe, _y_hat))
         Psi_w[:, 1, 1] = dot(_y_hat, dot(params.Psi_3D_output_labframe, _y_hat))
         return field, params.solver_status, params.tau_output, params.q_output.T, params.K_output.T, params.Psi_3D_output_labframe, (_g_hat, _x_hat, _y_hat), Psi_w
-
-    # Coordinate conversions for later
-    params.coordinate_conversions()
-
-    # Once the ray/beam-tracing is complete, save the data in params
-    # as xarray datasets
 
     
 

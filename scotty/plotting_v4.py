@@ -34,7 +34,7 @@ def plot_3d_flux_surfaces(
     
     Z = field.Z_coord if zlims is None else np.linspace(*zlims) # type: ignore
     XX, YY, ZZ = np.meshgrid(X, Y, Z, indexing="ij")
-    flux_coord = np.sqrt(field.polflux_in_cartesian(XX, YY, ZZ)) if use_rho else field.polflux_in_cartesian(XX, YY, ZZ)
+    flux_coord = np.sqrt(field.polflux_cartesian(XX, YY, ZZ)) if use_rho else field.polflux_cartesian(XX, YY, ZZ)
 
     # masking to remove NaNs and outside LCFS, to see if we can speed up plotting time
     # flux_threshold = 1.0 + 0.1 # leave this here just in case we want to implement this in the future
@@ -59,10 +59,7 @@ def plot_3d_flux_surfaces(
         caps={"x_show": show_axes, "y_show": show_axes, "z_show": show_axes},
         name=f"Flux surfaces, {r'$\rho_n' if use_rho else r'$\psi_n$'}",
         colorbar={
-            "title": {
-                "text": r"$\rho_n$" if use_rho else r"$\psi_n$",
-                "side": "top",
-            },
+            "title": r"$\rho_n$" if use_rho else r"$\psi_n$",
             "thickness": 10, "len": 0.7,
         }
     ))
@@ -225,8 +222,8 @@ def plot_3d_beam_in_plasma(
         existing_fig=fig,
         use_rho=use_rho,
         show_axes=show_axes,
-        show_graph=True,
-        show_in_browser=True,
+        show_graph=False,
+        show_in_browser=False,
     )
 
     fig = plot_3d_beam(

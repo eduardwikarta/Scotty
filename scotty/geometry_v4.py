@@ -4,10 +4,11 @@ import numpy as np
 import pathlib
 from scipy.interpolate import RectBivariateSpline, RegularGridInterpolator
 from scotty.derivatives import derivative
+from scotty.fun_general_v4 import find_q_labframe_cart_to_cyl
 from scotty.logger_v4 import logging, timer
 from scotty.torbeam import Torbeam
 from scotty.typing import ArrayLike, FloatArray
-from typing import Callable, Literal, Optional, Tuple, Union, List
+from typing import cast, Callable, Literal, Optional, Tuple, Union, List
 
 log = logging.getLogger()
 
@@ -209,12 +210,6 @@ class MagneticField_Cylindrical(ABC):
     # TO REMOVE -- incomplete 25 Apr 2026
     # def _calculate_incyl_outcart(self, R: ArrayLike, zeta: ArrayLike, Z: ArrayLike) -> FloatArray:
     
-    def unitvector_in_cartesian(self, R: ArrayLike, zeta: ArrayLike, Z: ArrayLike) -> FloatArray:
-        r"""Returns :math:`\mathbf{B}/|B|`, the unit vector of the magnetic field"""
-        magnitude = self.magnitude(R,zeta,Z)
-        vector = np.array( [self.B_X(R, zeta, Z), self.B_Y(R, zeta, Z), self.B_Z(R, zeta, Z)] )
-        return (vector / magnitude).T
-    
     # TO REMOVE -- incomplete 25 Apr 2026
     # def _calculate(self, q1: ArrayLike, q2: ArrayLike, q3: ArrayLike, in_coords: str = "cylindrical", out_coords: str = "cylindrical", vector: bool = False, unitvector: bool = False, magnitude: bool = False) -> List[FloatArray]:
     #     if   in_coords in ["cart", "cartesian"]:  R, zeta, Z = np.sqrt(q1**2 + q2**2), np.arctan2(q2, q1), q3
@@ -240,7 +235,17 @@ class MagneticField_Cylindrical(ABC):
     # For abstraction purposes
     def B_X(self, R: ArrayLike, zeta: ArrayLike, Z: ArrayLike) -> FloatArray: return self.B_R(R,zeta,Z)*np.cos(zeta) - self.B_T(R,zeta,Z)*np.sin(zeta)
     def B_Y(self, R: ArrayLike, zeta: ArrayLike, Z: ArrayLike) -> FloatArray: return self.B_R(R,zeta,Z)*np.sin(zeta) + self.B_T(R,zeta,Z)*np.cos(zeta)
-    def polflux_in_cartesian(self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike) -> FloatArray: return self.polflux(np.sqrt(X**2 + Y**2), 0, Z)
+
+    def unitvector_cartesian(self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike) -> FloatArray:
+        r"""Returns :math:`\mathbf{B}/|B|`, the unit vector of the magnetic field"""
+        R, zeta, Z = find_q_labframe_cart_to_cyl(np.array([X, Y, Z]))
+        magnitude = self.magnitude(R, zeta, Z)
+        vector = np.array( [self.B_X(R, zeta, Z), self.B_Y(R, zeta, Z), self.B_Z(R, zeta, Z)] )
+        return (vector / magnitude).T
+
+    def polflux_cartesian(self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike) -> FloatArray: return self.polflux(np.sqrt(X**2 + Y**2), 0, Z)
+    def d_polflux_dX(self, R: ArrayLike, zeta: ArrayLike, Z: ArrayLike, delta_R: float) -> FloatArray: return np.cos(zeta) * self.d_polflux_dR(R, zeta, Z, delta_R)
+    def d_polflux_dY(self, R: ArrayLike, zeta: ArrayLike, Z: ArrayLike, delta_R: float) -> FloatArray: return np.sin(zeta) * self.d_polflux_dR(R, zeta, Z, delta_R)
 
 
 
@@ -404,8 +409,8 @@ class MagneticField_Cartesian(ABC):
         return self._calculate_incart_outcart(X,Y,Z, vector=False, unitvector=False, magnitude=True)[0]
     
     # For abstraction purposes
-    def polflux_in_cartesian(self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike) -> FloatArray: return self.polflux(X,Y,Z)
-    def unitvector_in_cartesian(self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike) -> FloatArray: return self.unitvector(X,Y,Z)
+    def unitvector_cartesian(self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike) -> FloatArray: return self.unitvector(X,Y,Z)
+    def polflux_cartesian(self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike) -> FloatArray: return self.polflux(X,Y,Z)
 
 
 

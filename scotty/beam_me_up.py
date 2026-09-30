@@ -85,7 +85,7 @@ from scotty.hamiltonian import Hamiltonian
 from scotty.launch import launch_beam, find_entry_point
 from scotty.torbeam import Torbeam
 from scotty.ray_solver import propagate_ray
-from scotty.plotting import plot_dispersion_relation, plot_poloidal_beam_path
+from scotty.plotting import plot_dispersion_relation, plot_poloidal_beam_path, plot_H_eigvals_for_Happel_2017, plot_loc_s_for_Happel_2017
 from scotty._version import __version__
 
 # Checks
@@ -523,7 +523,19 @@ def beam_me_up(
         len_tau,
     )
     if quick_run:
-        return ray_solver_output
+        q_co, K_co = ray_solver_output # type: ignore
+        q_R_co, q_Z_co = q_co # type: ignore
+        K_R_co, K_zeta_co, K_Z_co = K_co
+        K_mag_co = np.sqrt(K_R_co**2 + (K_zeta_co / q_R_co) ** 2 + K_Z_co**2)
+        bR_co, bT_co, bZ_co = field.unit(*q_co) # type: ignore
+
+        sin_theta_m_co = (
+              bR_co * K_R_co
+            + bT_co * K_zeta_co / q_R_co
+            + bZ_co * K_Z_co
+        ) / K_mag_co
+
+        return sin_theta_m_co
 
     tau_leave, tau_points = cast(tuple, ray_solver_output)
 
@@ -697,7 +709,7 @@ def beam_me_up(
         delta_K_R,
         delta_K_zeta,
         delta_K_Z,
-        Psi_3D_lab_launch,
+        Psi_3D_lab_initial, # Psi_3D_lab_launch,
         Psi_3D_lab_entry,
         distance_from_launch_to_entry,
         vacuumLaunch_flag,
@@ -708,7 +720,7 @@ def beam_me_up(
     analysis = further_analysis(
         inputs,
         df,
-        Psi_3D_lab_entry_cartersian,
+        plasmaLaunch_Psi_3D_lab_Cartesian, # Psi_3D_lab_entry_cartersian,
         output_path,
         output_filename_suffix,
         field,
@@ -726,10 +738,15 @@ def beam_me_up(
         invalid_netcdf=True,
     )
 
+    print("\n\n\n\n\n\n\n")
+    print(dt)
+    print(type(dt))
+    print(dt.children)
+
     if figure_flag:
         default_plots(dt, field, output_path, output_filename_suffix)
 
-    return dt
+    return dt, field
 
 
 def default_plots(
@@ -740,9 +757,10 @@ def default_plots(
     Allows one to quickly gain an insight into what transpired in the simulation
     """
 
-    print("Making figures")
     plot_poloidal_beam_path(dt, filename=(output_path / f"Ray1_{suffix}.png"))
-    plot_dispersion_relation(dt.analysis, filename=(output_path / f"H_{suffix}.png"))
+    # plot_dispersion_relation(dt.analysis, filename=(output_path / f"H_{suffix}.png"))
+    plot_H_eigvals_for_Happel_2017(dt, filename=(output_path / f"H_{suffix}.png"))
+    plot_loc_s_for_Happel_2017(dt, filename=(output_path / f"loc_s_{suffix}.png"))
     print("Figures have been saved")
 
 
@@ -876,6 +894,11 @@ def create_magnetic_geometry(
         topfile_filename = magnetic_data_path / f"topfile{input_filename_suffix}"
         torbeam = Torbeam.from_file(topfile_filename)
 
+        psi_unnormalised = torbeam.psi
+        psi_a = np.max(torbeam.psi)
+        psi_lcfs = -1.48276
+        torbeam.psi = (torbeam.psi - psi_a) / (psi_lcfs - psi_a)
+
         return InterpolatedField(
             torbeam.R_grid,
             torbeam.Z_grid,
@@ -911,6 +934,27 @@ def create_magnetic_geometry(
             interp_order,
             interp_smoothing,
         )
+    
+    elif find_B_method == "omfit_rowmajor":
+        print("Using OMFIT JSON Torbeam file for B and poloidal flux")
+        topfile_filename = magnetic_data_path / f"topfile{input_filename_suffix}.json"
+
+        with open(topfile_filename) as f:
+            data = json.load(f)
+        
+        args = {
+            "R_grid": np.array(data["R"]),
+            "Z_grid": np.array(data["Z"]),
+            "B_R": np.array(data["Br"]),
+            "B_T": np.array(data["Bt"]),
+            "B_Z": np.array(data["Bz"]),
+            "psi": np.array(data["pol_flux"]),
+            "interp_order": interp_order,
+            "interp_smoothing": interp_smoothing,
+        }
+        if "n_e" in data.keys(): args["n_e"] = np.array(data["n_e"])
+        # if eduard_2d_ne_flag: args["n_e"] = np.array(data["n_e"])
+        return InterpolatedField(**args)
 
     if find_B_method == "test":
         # Works nicely with the new MAST-U UDA output

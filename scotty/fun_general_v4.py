@@ -1,9 +1,9 @@
 from __future__ import annotations
 import logging
 from math import isclose
-from multiprocessing.managers import ValueProxy
 import numpy as np
 from scipy import constants
+from scotty.checks_v4 import VALID_LAUNCH_MODE_FLAGS
 from scotty.logger_v4 import arr2str
 from scotty.typing import ArrayLike, Array, FloatArray, ComplexFloatArray
 from typing import Callable, Union, Tuple, Optional, List
@@ -1149,8 +1149,45 @@ def find_H_Cardano_eigh(launch_angular_freq: float, K_magnitude: ArrayLike, epsi
 
     return np.squeeze(eigvals), np.squeeze(eigvecs)
 
+def find_H_Cardano_formula(launch_angular_freq: float, K_magnitude: ArrayLike, epsilon_para: ArrayLike, epsilon_perp: ArrayLike, epsilon_g: ArrayLike, theta_m: ArrayLike) -> Tuple[FloatArray, FloatArray, FloatArray]:
+
+    D_11, D_22, D_bb, D_12, D_1b = find_D_terms(launch_angular_freq, K_magnitude, epsilon_para, epsilon_perp, epsilon_g, theta_m)
+    
+    h_0_coeff = (D_22 * D_1b**2) + (D_bb * D_12**2) - (D_11 * D_22 * D_bb)
+    h_1_coeff = (D_11 * D_bb) + (D_11 * D_22) + (D_22 * D_bb) - D_12**2 - D_1b**2
+    h_2_coeff = -D_11 - D_22 - D_bb
+    h_t_coeff = (
+        - 2 * h_2_coeff**3
+        + 9 * h_2_coeff * h_1_coeff
+        - 27 * h_0_coeff
+        + 3 * np.sqrt(3) * np.sqrt(
+            4 * h_2_coeff**3 * h_0_coeff
+            - h_2_coeff**2 * h_1_coeff**2
+            - 18 * h_2_coeff * h_1_coeff * h_0_coeff
+            + 4 * h_1_coeff**3
+            + 27 * h_0_coeff**2
+            + 0j  # to make the argument of the np.sqrt complex, so that the sqrt evaluates negative functions
+        )
+    )**(1/3)
+
+    H_1_Cardano = (
+        h_t_coeff / (3*2**(1/3))
+        - 2**(1/3) * (3 * h_1_coeff - h_2_coeff**2) / (3 * h_t_coeff)
+        - h_2_coeff / 3
+    )
+    H_2_Cardano = (
+        - (1 - 1j * np.sqrt(3)) / (6 * 2 ** (1 / 3)) * h_t_coeff
+        + (1 + 1j * np.sqrt(3)) * (3 * h_1_coeff - h_2_coeff**2) / (3 * 2 ** (2 / 3) * h_t_coeff)
+        - h_2_coeff / 3
+    )
+    H_3_Cardano = (
+        - (1 + 1j * np.sqrt(3)) / (6 * 2 ** (1 / 3)) * h_t_coeff
+        + (1 - 1j * np.sqrt(3)) * (3 * h_1_coeff - h_2_coeff**2) / (3 * 2 ** (2 / 3) * h_t_coeff)
+        - h_2_coeff / 3
+    )
+    return H_1_Cardano, H_2_Cardano, H_3_Cardano
+
 def find_mode_index_and_ehat(mode_flag: VALID_LAUNCH_MODE_FLAGS, H_Cardanos: FloatArray, ehats: ComplexFloatArray, tol_H: float = 1e-5, tol_O_mode_polarisation: float = 0.25) -> Tuple[int, float, ComplexFloatArray]:
-    from scotty.checks_v4 import VALID_LAUNCH_MODE_FLAGS
     """
     Given an array `H_Cardanos` of shape (3,) and an array of `ehats` of
     shape (3,3) where `H_Cardanos[i]` corresponds to `ehats[:,i]`, choose

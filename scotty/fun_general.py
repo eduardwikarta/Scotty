@@ -695,6 +695,29 @@ def find_Psi_3D_plasma_continuous(
     Psi_3D_plasma[1, 2] = Psi_p_Z_zeta
     Psi_3D_plasma[2, 1] = Psi_3D_plasma[1, 2]
 
+    # TO REMOVE -- see if matches with scotty4
+    print(f"\nfun_general.py:699, find_Psi_3D_plasma_continuous")
+    print(f"\neta not calculated here")
+    print(f"\ninterface_matrix =\n{interface_matrix}")
+    print(f"\nRHS vector =\n{[
+            Psi_v_zeta_zeta,
+            Psi_v_R_R * d_poloidal_flux_d_Z**2
+            - 2 * Psi_v_R_Z * d_poloidal_flux_d_R * d_poloidal_flux_d_Z
+            + Psi_v_Z_Z * d_poloidal_flux_d_R**2,
+            -Psi_v_R_zeta * d_poloidal_flux_d_Z + Psi_v_zeta_Z * d_poloidal_flux_d_R,
+            -dH_dR,
+            -dH_dZ,
+            0,
+        ]}")
+    print(f"\nPsi_3D_vacuum, cylindrical =")
+    print(Psi_vacuum_3D[0])
+    print(Psi_vacuum_3D[1])
+    print(Psi_vacuum_3D[2])
+    print(f"\nPsi_3D_plasma, cylindrical =")
+    print(Psi_3D_plasma[0])
+    print(Psi_3D_plasma[1])
+    print(Psi_3D_plasma[2])
+
     return Psi_3D_plasma
 
 
@@ -1046,6 +1069,24 @@ def find_Psi_3D_plasma_discontinuous(
     Psi_3D_plasma[1, 2] = Psi_p_Z_zeta
     Psi_3D_plasma[2, 1] = Psi_3D_plasma[1, 2]
 
+    # TO REMOVE -- see if matches with scotty4
+    print(f"\nfun_general.py:1069, find_Psi_3D_plasma_discontinuous")
+    print(f"\neta = {eta}")
+    print(f"\ninterface_matrix =\n{interface_matrix}")
+    print(f"\nRHS vector =\n{[
+            Psi_v_zeta_zeta,
+            Psi_v_R_R * dpolflux_dZ**2
+            - 2 * Psi_v_R_Z * dpolflux_dR * dpolflux_dZ
+            + Psi_v_Z_Z * dpolflux_dR**2,
+            -Psi_v_R_zeta * dpolflux_dZ
+            + Psi_v_zeta_Z * dpolflux_dR
+            + 2 * (K_v_R - K_p_R) * dpolflux_dR * eta
+            + 2 * (K_v_Z - K_p_Z) * dpolflux_dZ * eta,
+            -dH_dR,
+            -dH_dZ,
+            0,
+        ]}")
+
     return Psi_3D_plasma
 
 
@@ -1121,6 +1162,20 @@ def apply_discontinuous_BC(
         d2_poloidal_flux_dZ2_boundary,  # Continuous
         d2_poloidal_flux_dRdZ_boundary,  # Continuous
     )
+
+    print("\n\n\n")
+    print("fun_general:1167")
+    print("dH_dR", dH["dH_dR"])
+    print("dH_dzeta 0 by default")
+    print("dH_dZ", dH["dH_dZ"])
+    print("dH_dKR", dH["dH_dKR"])
+    print("dH_dKzeta", dH["dH_dKzeta"])
+    print("dH_dKZ", dH["dH_dKZ"])
+    print("dp/dR", d_poloidal_flux_dR_boundary)
+    print("dp/dZ", d_poloidal_flux_dZ_boundary)
+    print("d2p/dR2", d2_poloidal_flux_dR2_boundary)
+    print("d2p/dZ2", d2_poloidal_flux_dZ2_boundary)
+    print("d2p/dRdZ", d2_poloidal_flux_dRdZ_boundary)
 
     return K_plasma, Psi_3D_plasma
 

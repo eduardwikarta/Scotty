@@ -62,7 +62,7 @@ def find_plasma_entry_position(
 
     # Defining some wrapper functions for ease
     def _ray_line_wrapper(tau): return ray_line(*q_launch_cartesian, tau, poloidal_launch_angle_deg_Torbeam, toroidal_launch_angle_deg_Torbeam) # type: ignore
-    def _poloidal_flux_difference_along_ray_line_wrapper(tau): return poloidal_flux_difference_along_ray_line(*q_launch_cartesian, tau, poloidal_launch_angle_deg_Torbeam, toroidal_launch_angle_deg_Torbeam, field.polflux_in_cartesian, poloidal_flux_enter) # type: ignore
+    def _poloidal_flux_difference_along_ray_line_wrapper(tau): return poloidal_flux_difference_along_ray_line(*q_launch_cartesian, tau, poloidal_launch_angle_deg_Torbeam, toroidal_launch_angle_deg_Torbeam, field.polflux_cartesian, poloidal_flux_enter) # type: ignore
 
     # Given a particular field configuration, we find the maximum
     # distance that can be travelled by a ray before 'striking the
@@ -80,7 +80,7 @@ def find_plasma_entry_position(
     # If the entire array is `NaN`s, then raise error
 
     X_arr, Y_arr, Z_arr = ray_line(*q_launch_cartesian, tau_arr, poloidal_launch_angle_deg_Torbeam, toroidal_launch_angle_deg_Torbeam) # type: ignore
-    polflux_arr = field.polflux_in_cartesian(X_arr, Y_arr, Z_arr)
+    polflux_arr = field.polflux_cartesian(X_arr, Y_arr, Z_arr)
 
     if np.isnan(polflux_arr).all(): raise RuntimeError(f"The ray does not intersect the plasma. Check that the launch position is from q_zeta = 0 with acute launch angles")
 
@@ -96,7 +96,7 @@ def find_plasma_entry_position(
     # where poloidal flux is close to `poloidal_flux_enter`
 
     tau_arr_refined = np.linspace(start_tau, stop_tau, num_tau)
-    polflux_arr_refined = field.polflux_in_cartesian(*ray_line(*q_launch_cartesian, tau_arr_refined, poloidal_launch_angle_deg_Torbeam, toroidal_launch_angle_deg_Torbeam)) # type: ignore
+    polflux_arr_refined = field.polflux_cartesian(*ray_line(*q_launch_cartesian, tau_arr_refined, poloidal_launch_angle_deg_Torbeam, toroidal_launch_angle_deg_Torbeam)) # type: ignore
 
     if np.isnan(polflux_arr_refined).all(): log.warning(f"NaNs should not occur in the refined `tau` array search")
 
@@ -128,7 +128,7 @@ def find_plasma_entry_position(
     # ensure the ray is definitely inside
 
     q_initial_cartesian = _ray_line_wrapper(boundary_tau)
-    if field.polflux_in_cartesian(*q_initial_cartesian) > poloidal_flux_enter:
+    if field.polflux_cartesian(*q_initial_cartesian) > poloidal_flux_enter:
         q_initial_cartesian = _ray_line_wrapper(boundary_tau + boundary_adjust)
         log.debug(f"""
         Poloidal flux at plasma entry position is greater than `poloidal_flux_enter.`
@@ -370,7 +370,7 @@ def find_plasma_entry_parameters(
             # Psi_labframe = R^-1 * Psi_beamframe * R, where
             #    R is the rotation matrix to convert a vector from beamframe to labframe
             Psi_3D_launch_labframe_cartesian = np.matmul(rotation_matrix_inverse, np.matmul(Psi_3D_launch_beamframe_cartesian, rotation_matrix))
-            Psi_3D_launch_labframe = find_Psi_3D_labframe_cart_to_cyl(Psi_3D_launch_labframe_cartesian, K_launch_cartesian, q_launch_cartesian)
+            Psi_3D_launch_labframe = Psi_3D_launch_labframe_cartesian if cart else find_Psi_3D_labframe_cart_to_cyl(Psi_3D_launch_labframe_cartesian, K_launch_cartesian, q_launch_cartesian)
 
             # Now we propagate the beam until it reaches the plasma boundary,
             # and then apply either the continuous or discontinuous or no

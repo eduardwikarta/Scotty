@@ -282,6 +282,25 @@ def launch_beam(
         # No BC case
         K_initial = [K_R_entry, K_zeta_entry, K_Z_entry]
         Psi_3D_lab_initial = Psi_3D_lab_entry
+    
+    print("\n\n\n")
+    print("launch.py:287")
+    print("\nlaunch position (R, zeta, Z) =", launch_position)
+    print("\nK_entry (K_R, K_zeta, K_Z) =", K_R_entry, K_zeta_entry, K_Z_entry)
+    print("\nK_initial (K_R, K_zeta, K_Z) =", K_initial[0], K_initial[1], K_initial[2])
+    print(f"\nPsi_3D_lab_entry, cartesian =")
+    print(Psi_3D_lab_entry_cartersian[0])
+    print(Psi_3D_lab_entry_cartersian[1])
+    print(Psi_3D_lab_entry_cartersian[2])
+    print(f"\nPsi_3D_lab_entry, cylindrical =")
+    print(Psi_3D_lab_entry[0])
+    print(Psi_3D_lab_entry[1])
+    print(Psi_3D_lab_entry[2])
+    print(f"\nPsi_3D_plasma, cylindrical =")
+    print(Psi_3D_lab_initial[0])
+    print(Psi_3D_lab_initial[1])
+    print(Psi_3D_lab_initial[2])
+    print("\n\n\n")
 
     return (
         np.array(K_initial),

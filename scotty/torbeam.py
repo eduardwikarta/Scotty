@@ -87,10 +87,9 @@ class Torbeam:
         """Read TORBEAM geometry file"""
 
         with open(filename) as f:
-            while "X-coordinates" not in f.readline():
-                pass  # Start reading only from X-coords onwards
-            R_grid = read_floats_into_list_until("Z-coordinates", f)
-            Z_grid = read_floats_into_list_until("B_R", f)
+            while "Radial grid coordinates" not in f.readline(): pass # Start reading only from X-coords onwards
+            R_grid = read_floats_into_list_until("Vertical grid coordinates", f)
+            Z_grid = read_floats_into_list_until("B_r", f)
             R_points = len(R_grid)
             Z_points = len(Z_grid)
 
@@ -100,7 +99,7 @@ class Torbeam:
                 return array.reshape((Z_points, R_points)).transpose()
 
             B_R = from_fortran(read_floats_into_list_until("B_t", f))
-            B_T = from_fortran(read_floats_into_list_until("B_Z", f))
+            B_T = from_fortran(read_floats_into_list_until("B_z", f))
             B_Z = from_fortran(read_floats_into_list_until("psi", f))
             poloidal_flux = from_fortran(
                 read_floats_into_list_until("you fall asleep", f)

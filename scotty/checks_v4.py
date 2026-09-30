@@ -1,18 +1,6 @@
 from dataclasses import dataclass
 import logging
 from pathlib import Path
-from scotty.fun_general import find_q_lab_Cartesian
-from scotty.fun_general_v4 import (
-    find_K_labframe_cart_to_cyl,
-    find_K_labframe_cyl_to_cart,
-    find_K_magnitude,
-    find_Psi_3D_labframe_cart_to_cyl,
-    find_Psi_3D_labframe_cyl_to_cart,
-    find_q_labframe_cart_to_cyl,
-    find_q_labframe_cyl_to_cart,
-    freq_GHz_to_angular_frequency,
-    angular_frequency_to_wavenumber
-)
 from scotty.geometry_v4 import MagneticField_Cylindrical, MagneticField_Cartesian
 from scotty.profile_fit import ProfileFitLike
 from scotty.typing import FloatArray, ComplexFloatArray
@@ -135,6 +123,11 @@ class Parameters:
         **kwargs,
         ):
 
+        from scotty.fun_general_v4 import (
+            freq_GHz_to_angular_frequency,
+            angular_frequency_to_wavenumber
+        )
+
         ##################################################
         #
         # Main parameters
@@ -142,7 +135,7 @@ class Parameters:
         ##################################################
 
         self.geometry = geometry
-        self.cartesian_flag = isinstance(geometry, MagneticField_Cartesian)
+        self.cartesian_flag = geometry == "cartesian" # isinstance(geometry, MagneticField_Cartesian)
 
         # TORBEAM antenna angles are anti-clockwise from negative X-axis,
         # so we need to rotate the toroidal angle by pi. This will take
@@ -384,6 +377,15 @@ class Parameters:
         else: self.ne_filename = None
 
     def coordinate_conversions(self):
+        from scotty.fun_general_v4 import (
+            find_K_labframe_cart_to_cyl,
+            find_K_labframe_cyl_to_cart,
+            find_K_magnitude,
+            find_Psi_3D_labframe_cart_to_cyl,
+            find_Psi_3D_labframe_cyl_to_cart,
+            find_q_labframe_cart_to_cyl,
+            find_q_labframe_cyl_to_cart,
+        )
         if self.cartesian_flag:
             # position vectors
             self.q_launch_cartesian = self.q_launch # (3,)
@@ -402,7 +404,7 @@ class Parameters:
             self.K_output_cylindrical = find_K_labframe_cart_to_cyl(self.K_output_cartesian.T, self.q_output_cartesian.T).T
 
             # beam matrices
-            if self.ray_tracing_flag:
+            if not self.ray_tracing_flag:
                 # otherwise the type checker complains
                 assert self.Psi_3D_launch_labframe is not None
                 assert self.Psi_3D_entry_labframe is not None
@@ -435,7 +437,7 @@ class Parameters:
             self.K_output_cartesian = find_K_labframe_cyl_to_cart(self.K_output_cylindrical.T, self.q_output_cylindrical.T).T
 
             # beam matrices
-            if self.ray_tracing_flag:
+            if not self.ray_tracing_flag:
                 # otherwise the type checker complains
                 assert self.Psi_3D_launch_labframe is not None
                 assert self.Psi_3D_entry_labframe is not None
@@ -453,7 +455,7 @@ class Parameters:
         self.K_output_magnitude = find_K_magnitude(True, *self.K_output_cartesian.T, self.q_output_cartesian.T[0]) # (N,) # type: ignore
         self.K_hat_output_cartesian = self.K_output_cartesian / self.K_output_magnitude[:, np.newaxis]
         
-        if not self.ray_tracing_flag:
+        if self.ray_tracing_flag:
             self.Psi_3D_launch_labframe_cartesian = None
             self.Psi_3D_launch_labframe_cylindrical = None
             self.Psi_3D_entry_labframe_cartesian = None
