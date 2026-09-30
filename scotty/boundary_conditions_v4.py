@@ -16,7 +16,6 @@ from scotty.fun_general_v4 import (
 )
 from scotty.hamiltonian_v4 import Hamiltonian
 from scotty.logger_v4 import arr2str
-from scotty.ray_solver_v4 import ray_tracing
 from scotty.typing import ArrayLike, FloatArray, ComplexFloatArray
 from typing import Tuple, Literal, Optional, cast
 

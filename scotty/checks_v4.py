@@ -1,10 +1,18 @@
-from dataclasses import dataclass
 import logging
 from pathlib import Path
+from scotty.fun_general_v4 import (
+    find_K_labframe_cart_to_cyl,
+    find_K_labframe_cyl_to_cart,
+    find_K_magnitude,
+    find_Psi_3D_labframe_cart_to_cyl,
+    find_Psi_3D_labframe_cyl_to_cart,
+    find_q_labframe_cart_to_cyl,
+    find_q_labframe_cyl_to_cart,
+)
 from scotty.geometry_v4 import MagneticField_Cylindrical, MagneticField_Cartesian
 from scotty.profile_fit import ProfileFitLike
 from scotty.typing import FloatArray, ComplexFloatArray
-from typing import Literal, Optional, Sequence, Union, Tuple, overload
+from typing import Literal, Optional, Sequence, Union, Tuple
 import numpy as np
 import os
 
@@ -377,15 +385,6 @@ class Parameters:
         else: self.ne_filename = None
 
     def coordinate_conversions(self):
-        from scotty.fun_general_v4 import (
-            find_K_labframe_cart_to_cyl,
-            find_K_labframe_cyl_to_cart,
-            find_K_magnitude,
-            find_Psi_3D_labframe_cart_to_cyl,
-            find_Psi_3D_labframe_cyl_to_cart,
-            find_q_labframe_cart_to_cyl,
-            find_q_labframe_cyl_to_cart,
-        )
         if self.cartesian_flag:
             # position vectors
             self.q_launch_cartesian = self.q_launch # (3,)

@@ -238,5 +238,6 @@ def derivative(
     # If float, return float
     # If FloatArray, return FloatArray
     final_result = cast(FloatArray, full_result) / np.prod(dim_spacings)
-    if isinstance(final_result, np.ndarray) and final_result.shape == (1,): return np.float64(final_result)
-    else: return final_result
+    return final_result.squeeze()
+    # if isinstance(final_result, np.ndarray) and final_result.shape == (1,): return np.float64(final_result)
+    # else: return final_result

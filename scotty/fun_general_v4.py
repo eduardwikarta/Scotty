@@ -1,9 +1,8 @@
 from __future__ import annotations
 import logging
-from math import isclose
 import numpy as np
 from scipy import constants
-from scotty.checks_v4 import VALID_LAUNCH_MODE_FLAGS
+# from scotty.checks_v4 import VALID_LAUNCH_MODE_FLAGS
 from scotty.logger_v4 import arr2str
 from scotty.typing import ArrayLike, Array, FloatArray, ComplexFloatArray
 from typing import Callable, Union, Tuple, Optional, List
@@ -654,9 +653,9 @@ def find_g_cartesian(cartesian: bool, q0: ArrayLike, q1: ArrayLike, q2: ArrayLik
         Unit vector of the group velocity, in Cartesian coordinates
     """
     if cartesian:
-        dH_dKx = dH["dH_dKx"]
-        dH_dKy = dH["dH_dKy"]
-        dH_dKz = dH["dH_dKz"]
+        dH_dKx = dH["dH_dKX"]
+        dH_dKy = dH["dH_dKY"]
+        dH_dKz = dH["dH_dKZ"]
     else: # cylindrical
         q_R, q_zeta, q_Z = q0, q1, q2
         sin_zeta = np.sin(q_zeta)
@@ -670,6 +669,15 @@ def find_g_cartesian(cartesian: bool, q0: ArrayLike, q1: ArrayLike, q2: ArrayLik
     g_vec_cart = np.stack((dH_dKx, dH_dKy, dH_dKz), axis=1)
     g_magnitude = np.linalg.norm(g_vec_cart, axis=1)
     g_hat_cart = g_vec_cart / g_magnitude[:, np.newaxis]
+
+    log.info(f"""\n\n\n
+q0.shape {q0.shape}
+q1.shape {q1.shape}
+q2.shape {q2.shape}
+dH_dKx.shape {dH_dKx.shape}
+dH_dKy.shape {dH_dKy.shape}
+dH_dKz.shape {dH_dKz.shape}
+\n\n\n""")
 
     return g_vec_cart, g_magnitude, g_hat_cart
 

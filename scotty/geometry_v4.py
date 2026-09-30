@@ -463,6 +463,33 @@ class InterpolatedField_Cartesian(MagneticField_Cartesian):
     def B_Y(self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike) -> FloatArray: return self._interp_B_Y(X,Y,Z)
     def B_Z(self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike) -> FloatArray: return self._interp_B_Z(X,Y,Z)
     def polflux(self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike) -> FloatArray: return self._interp_polflux(X,Y,Z)
+
+    # TO REMOVE -- 30 September 2026
+    # Defining class attributes for first order derivatives of B field -- for future work?
+    # Need to compare with dbhats in analysis.py
+    # These are from scotty 3D
+    # def d_B_X_dX(self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike) -> FloatArray:
+    #     return self._spline_B_X((X,Y,Z), nu=[1,0,0])
+    # def d_B_Y_dX(self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike) -> FloatArray:
+    #     return self._spline_B_Y((X,Y,Z), nu=[1,0,0])
+    # def d_B_Z_dX(self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike) -> FloatArray:
+    #     return self._spline_B_Z((X,Y,Z), nu=[1,0,0])
+    # def d_B_X_dY(self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike) -> FloatArray:
+    #     return self._spline_B_X((X,Y,Z), nu=[0,1,0])
+    # def d_B_Y_dY(self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike) -> FloatArray:
+    #     return self._spline_B_Y((X,Y,Z), nu=[0,1,0])
+    # def d_B_Z_dY(self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike) -> FloatArray:
+    #     return self._spline_B_Z((X,Y,Z), nu=[0,1,0])
+    # def d_B_X_dZ(self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike) -> FloatArray:
+    #     return self._spline_B_X((X,Y,Z), nu=[0,0,1])
+    # def d_B_Y_dZ(self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike) -> FloatArray:
+    #     return self._spline_B_Y((X,Y,Z), nu=[0,0,1])
+    # def d_B_Z_dZ(self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike) -> FloatArray:
+    #     return self._spline_B_Z((X,Y,Z), nu=[0,0,1])
+    # NOTE NEED TO RENAME: this isnt actually d(bhat)/dX, but d(Bvec)/dX
+    # Need to use chain rule to get d(bhat)/dX, so might actually be less computationally expensive to use finite differences
+    # def d_bhat_dX(self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike) -> FloatArray:
+    #     return np.array( [self.d_B_X_dX(X,Y,Z), self.d_B_Y_dX(X,Y,Z), self.d_B_Z_dX(X,Y,Z)] ).T
     
     # Defining the class attributes for the first- and second-order derivatives of polflux
     def d_polflux_dX(self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike, delta_X: float) -> FloatArray:
@@ -491,6 +518,16 @@ class InterpolatedField_Cartesian(MagneticField_Cartesian):
     
     def d2_polflux_dYdZ(self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike, delta_Y: float, delta_Z: float) -> FloatArray:
         return derivative(self.polflux, ("Y", "Z"), {"X": X, "Y": Y, "Z": Z}, {"Y": delta_Y, "Z": delta_Z})
+
+    # TO REMOVE -- 30 September 2026
+    # Defining class attributes for poloidal flux derivatives
+    # These are from scotty 3D
+    # def d_polflux_dX_TEST(self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike) -> FloatArray:
+    #     return self._spline_polflux((X,Y,Z), nu=[1,0,0])
+    # def d_polflux_dY_TEST(self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike) -> FloatArray:
+    #     return self._spline_polflux((X,Y,Z), nu=[0,1,0])
+    # def d_polflux_dZ_TEST(self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike) -> FloatArray:
+    #     return self._spline_polflux((X,Y,Z), nu=[0,0,1])
 
 
 
@@ -523,7 +560,7 @@ def create_magnetic_geometry(
     min_X, max_X = np.min(find_B_method.R_coord), np.max(find_B_method.R_coord)
     min_Z, max_Z = np.min(find_B_method.Z_coord), np.max(find_B_method.Z_coord)
     X_coords = find_B_method.R_coord # np.linspace(min_X, max_X, round((max_X-min_X)/0.01+1))
-    Y_coords = np.linspace(-1, 1, 51)
+    Y_coords = np.linspace(-0.25, 0.1, 36) # np.linspace(-1, 1, 51)
     Z_coords = find_B_method.Z_coord # np.linspace(min_Z, max_Z, round((max_Z-min_Z)/0.01+1))
 
     XX, YY, ZZ = np.meshgrid(X_coords, Y_coords, Z_coords, indexing="ij")
