@@ -43,6 +43,45 @@ several modules have been removed or reorganised (for example `outplot`,
 `compare_plot`, `fun_evolution`, `check_input` and `check_output`), so
 scripts written for v3 may need updating.
 
+### Changes from v3 that affect existing scripts
+
+- `beam_me_up` requires `geometry` (`"cylindrical"` or `"cartesian"`),
+  `launch_flag` (`"vacuum"` or `"plasma"`) and `boundary_flag`
+  (`"continuous"`, `"discontinuous"` or `None`). These replace v3's
+  `vacuumLaunch_flag`, `vacuum_propagation_flag` and `Psi_BC_flag`, which
+  are now ignored. A v3 launch from vacuum with `Psi_BC_flag="continuous"`
+  is `geometry="cylindrical", launch_flag="vacuum",
+  boundary_flag="continuous"`, as in the built-in diagnostic presets.
+- Launch angles passed to the launch functions are in degrees (TORBEAM
+  convention), not radians.
+- Output is an `xarray.DataTree` with `inputs`, `solver_output`,
+  `analysis` and `dbs_analysis` nodes, and several variables are renamed
+  (for example `q_R` is now `solver_output/q_R_output`, and
+  `normalised_plasma_freqs` is `analysis/normalised_omega_pe`).
+- The default `interp_smoothing` is 5 (it was 0 in v3), so results with
+  interpolated fields can differ from v3 for the same inputs.
+- The analytical fields use exact poloidal flux derivatives by default;
+  pass `create_magnetic_geometry={"derivative_method": "numerical"}` to
+  `beam_me_up` for finite differences.
+
+### Known issues in v4
+
+These are marked as expected failures (`xfail`) or skipped in the tests:
+
+- Temperature profiles are not implemented yet, so there are no
+  relativistic corrections.
+- X-mode: `K_R` differs from v3 by about 2 (on values of order 1000) where
+  it crosses zero near the cutoff; elsewhere it agrees to about 0.3%.
+- Inboard launches: `find_plasma_entry_position` only searches along the
+  ray up to `max(q_launch_cartesian)`, which is too short to reach the
+  plasma from the inboard side.
+- `find_B_method="omfit"` loads the data but then raises "not supported"
+  (in `get_profile_data`, the TORBEAM branch should be an `elif`).
+- `find_B_method` values `"test"`, `"test_notime"`, `"UDA_saved"`,
+  `"EFITpp"` and `"curvy_slab"` from v3 have not been ported to v4 yet.
+- `profile_fit` no longer accepts `ProfileFit` objects directly.
+- The scripts in `Examples/` still use the v3 launch flags.
+
 To install the development version of `scotty` straight from Github:
 
 ```
