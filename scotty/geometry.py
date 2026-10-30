@@ -1,4 +1,4 @@
-from abc import ABC
+from abc import ABC, abstractmethod
 import json
 from multiprocessing.managers import ValueProxy
 import numpy as np
@@ -58,6 +58,9 @@ def get_profile_data(
     ##############################################
     # TORBEAM
     ##############################################
+    # TODO: this should be `elif`. As an `if`, find_B_method = "omfit" loads
+    # the data above, then falls through to the `else` below and raises
+    # "not supported"; see "Known issues in v4" in README
     if find_B_method == "torbeam":
         log.info(f"Using TORBEAM input files for B and poloidal flux")
         topfile_path = magnetic_data_path / f"topfile{input_filename_suffix}"
@@ -161,38 +164,47 @@ class MagneticField_Cylindrical(ABC):
     poloidalFlux_grid: FloatArray  #: Value of the poloidal magnetic flux, :math:`\psi`, on ``(R_coord, Z_coord)``
     # TODO: Include B_R grid, B_T grid, B_Z grids
 
+    @abstractmethod
     def B_R(self, R: ArrayLike, _: ArrayLike, Z: ArrayLike) -> ArrayLike:
         raise NotImplementedError
 
+    @abstractmethod
     def B_T(self, R: ArrayLike, _: ArrayLike, Z: ArrayLike) -> ArrayLike:
         raise NotImplementedError
 
+    @abstractmethod
     def B_Z(self, R: ArrayLike, _: ArrayLike, Z: ArrayLike) -> ArrayLike:
         raise NotImplementedError
 
+    @abstractmethod
     def polflux(self, R: ArrayLike, _: ArrayLike, Z: ArrayLike) -> ArrayLike:
         raise NotImplementedError
 
+    @abstractmethod
     def d_polflux_dR(
         self, R: ArrayLike, _: ArrayLike, Z: ArrayLike, delta_R: float
     ) -> ArrayLike:
         raise NotImplementedError
 
+    @abstractmethod
     def d_polflux_dZ(
         self, R: ArrayLike, _: ArrayLike, Z: ArrayLike, delta_Z: float
     ) -> ArrayLike:
         raise NotImplementedError
 
+    @abstractmethod
     def d2_polflux_dR2(
         self, R: ArrayLike, _: ArrayLike, Z: ArrayLike, delta_R: float
     ) -> ArrayLike:
         raise NotImplementedError
 
+    @abstractmethod
     def d2_polflux_dZ2(
         self, R: ArrayLike, _: ArrayLike, Z: ArrayLike, delta_Z: float
     ) -> ArrayLike:
         raise NotImplementedError
 
+    @abstractmethod
     def d2_polflux_dRdZ(
         self, R: ArrayLike, _: ArrayLike, Z: ArrayLike, delta_R: float, delta_Z: float
     ) -> ArrayLike:
@@ -407,7 +419,95 @@ class InterpolatedField_Cylindrical(MagneticField_Cylindrical):
         return self._d2psi_dRdZ(R, _, Z, delta_R, delta_Z)
 
 
-class ConstantCurrentDensityField(MagneticField_Cylindrical):
+class CircularFluxSurfaceField(MagneticField_Cylindrical):
+    r"""Base class for analytical geometries with circular flux surfaces,
+    where the poloidal flux is :math:`\psi = \rho / a`, with
+    :math:`\rho = \sqrt{(R - R_{axis})^2 + Z^2}` and :math:`a` the minor radius.
+
+    Child classes must set ``R_axis`` and ``minor_radius_a``, and implement
+    ``B_R``, ``B_T`` and ``B_Z``.
+
+    The poloidal flux derivatives are exact (``derivative_method =
+    "analytic"``) by default, or can be taken by finite differences of
+    ``polflux`` (``derivative_method = "numerical"``) with the step sizes
+    passed to each method. All of them are singular on the magnetic axis
+    (:math:`\rho = 0`).
+    """
+
+    R_axis: float
+    minor_radius_a: float
+    derivative_method: Literal["analytic", "numerical"] = "analytic"
+
+    def _set_derivative_method(
+        self, derivative_method: Literal["analytic", "numerical"]
+    ) -> None:
+        if derivative_method not in ["analytic", "numerical"]:
+            raise ValueError(
+                f"`derivative_method` must be 'analytic' or 'numerical', but got '{derivative_method}'"
+            )
+        self.derivative_method = derivative_method
+
+    def rho(self, R: ArrayLike, _: ArrayLike, Z: ArrayLike) -> FloatArray:
+        R, Z = np.asarray(R, dtype=np.float64), np.asarray(Z, dtype=np.float64)
+        return np.sqrt((R - self.R_axis) ** 2 + Z**2)
+
+    def polflux(self, R: ArrayLike, _: ArrayLike, Z: ArrayLike) -> FloatArray:
+        R, Z = np.asarray(R, dtype=np.float64), np.asarray(Z, dtype=np.float64)
+        return self.rho(R, _, Z) / self.minor_radius_a
+
+    def _polflux_RZ(self, R: ArrayLike, Z: ArrayLike) -> FloatArray:
+        # Axisymmetric, so `derivative` only needs R and Z
+        return self.polflux(R, 0.0, Z)
+
+    def _numerical_derivative(
+        self, dims: Union[str, Tuple[str, str]], R: ArrayLike, Z: ArrayLike, spacings
+    ) -> FloatArray:
+        return derivative(self._polflux_RZ, dims, {"R": R, "Z": Z}, spacings)
+
+    def d_polflux_dR(
+        self, R: ArrayLike, _: ArrayLike, Z: ArrayLike, delta_R: float
+    ) -> FloatArray:
+        if self.derivative_method == "numerical":
+            return self._numerical_derivative("R", R, Z, {"R": delta_R})
+        R, Z = np.asarray(R, dtype=np.float64), np.asarray(Z, dtype=np.float64)
+        return (R - self.R_axis) / (self.minor_radius_a * self.rho(R, _, Z))
+
+    def d_polflux_dZ(
+        self, R: ArrayLike, _: ArrayLike, Z: ArrayLike, delta_Z: float
+    ) -> FloatArray:
+        if self.derivative_method == "numerical":
+            return self._numerical_derivative("Z", R, Z, {"Z": delta_Z})
+        R, Z = np.asarray(R, dtype=np.float64), np.asarray(Z, dtype=np.float64)
+        return Z / (self.minor_radius_a * self.rho(R, _, Z))
+
+    def d2_polflux_dR2(
+        self, R: ArrayLike, _: ArrayLike, Z: ArrayLike, delta_R: float
+    ) -> FloatArray:
+        if self.derivative_method == "numerical":
+            return self._numerical_derivative(("R", "R"), R, Z, {"R": delta_R})
+        R, Z = np.asarray(R, dtype=np.float64), np.asarray(Z, dtype=np.float64)
+        return Z**2 / (self.minor_radius_a * self.rho(R, _, Z) ** 3)
+
+    def d2_polflux_dZ2(
+        self, R: ArrayLike, _: ArrayLike, Z: ArrayLike, delta_Z: float
+    ) -> FloatArray:
+        if self.derivative_method == "numerical":
+            return self._numerical_derivative(("Z", "Z"), R, Z, {"Z": delta_Z})
+        R, Z = np.asarray(R, dtype=np.float64), np.asarray(Z, dtype=np.float64)
+        return (R - self.R_axis) ** 2 / (self.minor_radius_a * self.rho(R, _, Z) ** 3)
+
+    def d2_polflux_dRdZ(
+        self, R: ArrayLike, _: ArrayLike, Z: ArrayLike, delta_R: float, delta_Z: float
+    ) -> FloatArray:
+        if self.derivative_method == "numerical":
+            return self._numerical_derivative(
+                ("R", "Z"), R, Z, {"R": delta_R, "Z": delta_Z}
+            )
+        R, Z = np.asarray(R, dtype=np.float64), np.asarray(Z, dtype=np.float64)
+        return -(R - self.R_axis) * Z / (self.minor_radius_a * self.rho(R, _, Z) ** 3)
+
+
+class ConstantCurrentDensityField(CircularFluxSurfaceField):
     """Circular cross-section magnetic geometry with constant current density
 
     TODO
@@ -429,6 +529,9 @@ class ConstantCurrentDensityField(MagneticField_Cylindrical):
         Number of points for sample ``(R, Z)`` grid
     grid_buffer_factor:
         Multiplicative factor to increase size of sample grid by
+    derivative_method : str
+        ``"analytic"`` (default) for exact poloidal flux derivatives, or
+        ``"numerical"`` for finite differences
     """
 
     def __init__(
@@ -440,22 +543,19 @@ class ConstantCurrentDensityField(MagneticField_Cylindrical):
         R_points: int = 101,
         Z_points: int = 101,
         grid_buffer_factor: float = 1,
+        derivative_method: Literal["analytic", "numerical"] = "analytic",
     ):
         self.B_T_axis = B_T_axis
         self.R_axis = R_axis
         self.minor_radius_a = minor_radius_a
         self.B_p_a = B_p_a
+        self._set_derivative_method(derivative_method)
 
         grid_width = grid_buffer_factor * minor_radius_a
         self.R_coord = np.linspace(R_axis - grid_width, R_axis + grid_width, R_points)
         self.Z_coord = np.linspace(-grid_width, grid_width, Z_points)
-        self.poloidalFlux_grid = self.polflux(
-            *np.meshgrid(self.R_coord, self.Z_coord, indexing="ij")
-        )
-
-    def rho(self, R: ArrayLike, _: ArrayLike, Z: ArrayLike) -> FloatArray:
-        R, Z = np.asarray(R, dtype=np.float64), np.asarray(Z, dtype=np.float64)
-        return np.sqrt((R - self.R_axis) ** 2 + Z**2)
+        R_meshgrid, Z_meshgrid = np.meshgrid(self.R_coord, self.Z_coord, indexing="ij")
+        self.poloidalFlux_grid = self.polflux(R_meshgrid, 0.0, Z_meshgrid)
 
     def B_R(self, R: ArrayLike, _: ArrayLike, Z: ArrayLike) -> FloatArray:
         R, Z = np.asarray(R, dtype=np.float64), np.asarray(Z, dtype=np.float64)
@@ -469,12 +569,8 @@ class ConstantCurrentDensityField(MagneticField_Cylindrical):
         R, Z = np.asarray(R, dtype=np.float64), np.asarray(Z, dtype=np.float64)
         return -self.B_p_a * (R - self.R_axis) / self.rho(R, _, Z)
 
-    def polflux(self, R: ArrayLike, _: ArrayLike, Z: ArrayLike) -> FloatArray:
-        R, Z = np.asarray(R, dtype=np.float64), np.asarray(Z, dtype=np.float64)
-        return self.rho(R, _, Z) / self.minor_radius_a
 
-
-class CircularCrossSectionField(MagneticField_Cylindrical):
+class CircularCrossSectionField(CircularFluxSurfaceField):
     """Simple circular cross-section magnetic geometry
 
     Parameters
@@ -492,6 +588,9 @@ class CircularCrossSectionField(MagneticField_Cylindrical):
         Number of points for sample ``(R, Z)`` grid
     grid_buffer_factor : float
         Multiplicative factor to increase size of sample grid by
+    derivative_method : str
+        ``"analytic"`` (default) for exact poloidal flux derivatives, or
+        ``"numerical"`` for finite differences
     """
 
     def __init__(
@@ -503,22 +602,19 @@ class CircularCrossSectionField(MagneticField_Cylindrical):
         R_points: int = 101,
         Z_points: int = 101,
         grid_buffer_factor: float = 1.0,
+        derivative_method: Literal["analytic", "numerical"] = "analytic",
     ):
         self.B_T_axis = B_T_axis
         self.R_axis = R_axis
         self.minor_radius_a = minor_radius_a
         self.B_p_a = B_p_a
+        self._set_derivative_method(derivative_method)
 
         grid_width = grid_buffer_factor * minor_radius_a
         self.R_coord = np.linspace(R_axis - grid_width, R_axis + grid_width, R_points)
         self.Z_coord = np.linspace(-grid_width, grid_width, Z_points)
-        self.poloidalFlux_grid = self.polflux(
-            *np.meshgrid(self.R_coord, self.Z_coord, indexing="ij")
-        )
-
-    def rho(self, R: ArrayLike, _: ArrayLike, Z: ArrayLike) -> FloatArray:
-        R, Z = np.asarray(R, dtype=np.float64), np.asarray(Z, dtype=np.float64)
-        return np.sqrt((R - self.R_axis) ** 2 + Z**2)
+        R_meshgrid, Z_meshgrid = np.meshgrid(self.R_coord, self.Z_coord, indexing="ij")
+        self.poloidalFlux_grid = self.polflux(R_meshgrid, 0.0, Z_meshgrid)
 
     def B_R(self, R: ArrayLike, _: ArrayLike, Z: ArrayLike) -> FloatArray:
         R, Z = np.asarray(R, dtype=np.float64), np.asarray(Z, dtype=np.float64)
@@ -542,10 +638,6 @@ class CircularCrossSectionField(MagneticField_Cylindrical):
             / (R * self.minor_radius_a * self.rho(R, _, Z)),
         )
 
-    def polflux(self, R: ArrayLike, _: ArrayLike, Z: ArrayLike) -> FloatArray:
-        R, Z = np.asarray(R, dtype=np.float64), np.asarray(Z, dtype=np.float64)
-        return self.rho(R, _, Z) / self.minor_radius_a
-
 
 ##################################################
 #
@@ -563,58 +655,71 @@ class MagneticField_Cartesian(ABC):
     Z_coord: FloatArray
     # TODO: Include B_X, B_Y, B_Z, psi grids
 
+    @abstractmethod
     def B_X(self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike) -> ArrayLike:
         raise NotImplementedError
 
+    @abstractmethod
     def B_Y(self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike) -> ArrayLike:
         raise NotImplementedError
 
+    @abstractmethod
     def B_Z(self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike) -> ArrayLike:
         raise NotImplementedError
 
+    @abstractmethod
     def polflux(self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike) -> ArrayLike:
         raise NotImplementedError
 
+    @abstractmethod
     def d_polflux_dX(
         self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike, delta_X: float
     ) -> ArrayLike:
         raise NotImplementedError
 
+    @abstractmethod
     def d_polflux_dY(
         self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike, delta_Y: float
     ) -> ArrayLike:
         raise NotImplementedError
 
+    @abstractmethod
     def d_polflux_dZ(
         self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike, delta_Z: float
     ) -> ArrayLike:
         raise NotImplementedError
 
+    @abstractmethod
     def d2_polflux_dX2(
         self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike, delta_X: float
     ) -> ArrayLike:
         raise NotImplementedError
 
+    @abstractmethod
     def d2_polflux_dY2(
         self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike, delta_Y: float
     ) -> ArrayLike:
         raise NotImplementedError
 
+    @abstractmethod
     def d2_polflux_dZ2(
         self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike, delta_Z: float
     ) -> ArrayLike:
         raise NotImplementedError
 
+    @abstractmethod
     def d2_polflux_dXdY(
         self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike, delta_X: float, delta_Y: float
     ) -> ArrayLike:
         raise NotImplementedError
 
+    @abstractmethod
     def d2_polflux_dXdZ(
         self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike, delta_X: float, delta_Z: float
     ) -> ArrayLike:
         raise NotImplementedError
 
+    @abstractmethod
     def d2_polflux_dYdZ(
         self, X: ArrayLike, Y: ArrayLike, Z: ArrayLike, delta_Y: float, delta_Z: float
     ) -> ArrayLike:
@@ -959,8 +1064,11 @@ def create_magnetic_geometry(
 
         find_B_method = find_B_method.lower()
 
-        if find_B_method == "analytical":
-            log.debug("Using analytical constant current density geometry")
+        if find_B_method in ["analytical", "unit-tests"]:
+            B_T_axis = kwargs.get("B_T_axis")
+            R_axis = kwargs.get("R_axis")
+            minor_radius_a = kwargs.get("minor_radius_a")
+            B_p_a = kwargs.get("B_p_a")
             if B_T_axis is None:
                 raise ValueError(missing_arg("B_T_axis"))
             if R_axis is None:
@@ -969,7 +1077,27 @@ def create_magnetic_geometry(
                 raise ValueError(missing_arg("minor_radius_a"))
             if B_p_a is None:
                 raise ValueError(missing_arg("B_p_a"))
-            field = ConstantCurrentDensityField(B_T_axis, R_axis, minor_radius_a, B_p_a)
+            # "analytic" (exact) or "numerical" (finite difference)
+            # poloidal flux derivatives
+            derivative_method = kwargs.get("derivative_method", "analytic")
+            if find_B_method == "analytical":
+                log.debug("Using analytical constant current density geometry")
+                field = ConstantCurrentDensityField(
+                    B_T_axis,
+                    R_axis,
+                    minor_radius_a,
+                    B_p_a,
+                    derivative_method=derivative_method,
+                )
+            else:
+                log.debug("Using analytical circular cross-section geometry")
+                field = CircularCrossSectionField(
+                    B_T_axis,
+                    R_axis,
+                    minor_radius_a,
+                    B_p_a,
+                    derivative_method=derivative_method,
+                )
 
         elif find_B_method in ["omfit", "torbeam"]:
             (
@@ -1020,6 +1148,8 @@ def create_magnetic_geometry(
                 f"Interpolating B and poloidal flux profiles took {duration_field_interpolation} s"
             )
 
+        # TODO: port the remaining v3 sources ("test", "test_notime",
+        # "UDA_saved", "EFITpp", "curvy_slab") to v4
         else:
             raise ValueError(f"`find_B_method` = '{find_B_method}' is not supported")
 

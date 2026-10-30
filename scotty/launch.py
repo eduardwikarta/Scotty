@@ -79,6 +79,9 @@ def find_plasma_entry_position(
     # centre column', then parametrise the path into sections of
     # 0.01m each, and find how many are needed. We also insist that
     # there are at least 100 steps
+    # TODO: `max_dist = max(q_launch_cartesian)` assumes an outboard launch
+    # heading inwards. For inboard launches (e.g. R = 0.1 m) the search is
+    # far too short to reach the plasma; see "Known issues in v4" in README
 
     num_tau = int(max(max_dist / 0.01, 100))
     tau_arr = np.linspace(0, max_dist, num_tau)
@@ -125,7 +128,7 @@ def find_plasma_entry_position(
 
     if len(spline_roots) == 0:
         minimum = minimize_scalar(_poloidal_flux_difference_along_ray_line_wrapper)
-        q_closest_approach_cartesian = _ray_line_wrapper(minimum)
+        q_closest_approach_cartesian = _ray_line_wrapper(minimum.x)
         q_closest_approach_cylindrical = find_q_labframe_cart_to_cyl(
             q_closest_approach_cartesian
         )
@@ -187,7 +190,7 @@ def find_auto_delta_signs(
     # Now, we also perform auto_delta_sign checks (if the user specifies)
     # If the user does not want to flip the signs, just return them
     # Otherwise, check which geometry is being used and check the signs
-    if auto_delta_sign:
+    if not auto_delta_sign:
         return deltas
 
     log.info(f"Setting delta signs")

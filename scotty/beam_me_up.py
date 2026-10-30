@@ -235,6 +235,20 @@ def beam_me_up(
     )
     temperature_fit = None
 
+    # Analytical field parameters can be passed directly to beam_me_up (as in
+    # v3) or nested in `create_magnetic_geometry`; the nested ones take priority
+    field_kwargs = {
+        key: value
+        for key, value in {
+            "B_T_axis": params.B_T_axis,
+            "R_axis": params.R_axis,
+            "minor_radius_a": params.minor_radius_a,
+            "B_p_a": params.B_p_a,
+        }.items()
+        if value is not None
+    }
+    field_kwargs.update(kwargs.get("create_magnetic_geometry", {}))
+
     # If the user has already pre-loaded a field, use it
     # Otherwise, create a new one from the specified data pathway
     field = create_magnetic_geometry(
@@ -247,7 +261,7 @@ def beam_me_up(
         input_filename_suffix=params.input_filename_suffix,
         shot=params.shot,
         equil_time=params.equil_time,
-        **kwargs.get("create_magnetic_geometry", {}),
+        **field_kwargs,
     )
 
     log.info(f"""\n
@@ -281,6 +295,9 @@ def beam_me_up(
         params.delta_R, params.delta_Z = spatial_deltas
     elif params.geometry == "cartesian":
         params.delta_X, params.delta_Y, params.delta_Z = spatial_deltas
+    # The Hamiltonians below take their spacings from `params.deltas`, so
+    # update its spatial part as well
+    params.deltas = np.concatenate([spatial_deltas, params.deltas[-3:]])
 
     # Initialises the Hamiltonian H for `mode_flag`s +1 and -1
     (
